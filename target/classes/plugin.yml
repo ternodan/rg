@@ -1,0 +1,64 @@
+name: RGProtect
+main: com.yourplugin.rGG.RGProtectPlugin
+version: 1.0
+api-version: 1.13
+authors: [YourName]
+description: Advanced region protection plugin with visual borders, expansion system and lifetime timers
+website: https://yourwebsite.com
+
+depend:
+  - WorldGuard
+  - WorldEdit
+  - Vault
+
+commands:
+  rgprotect:
+    description: Main RGProtect command
+    usage: /<command> [args]
+    aliases: [rgp, rgg]
+
+permissions:
+  rgprotect.*:
+    description: All RGProtect permissions
+    default: op
+    children:
+      rgprotect.admin: true
+      rgprotect.get: true
+      rgprotect.place: true
+      rgprotect.reload: true
+      rgprotect.borders.toggle: true
+      rgprotect.borders.toggle.others: true
+      rgprotect.timer.bypass: true
+      rgprotect.timer.extend: true
+
+  rgprotect.admin:
+    description: Admin permissions
+    default: op
+
+  rgprotect.get:
+    description: Get protect blocks
+    default: op
+
+  rgprotect.place:
+    description: Place protect blocks for other players
+    default: op
+
+  rgprotect.reload:
+    description: Reload configuration
+    default: op
+
+  rgprotect.borders.toggle:
+    description: Toggle region borders visibility
+    default: true
+
+  rgprotect.borders.toggle.others:
+    description: Toggle borders for other players' regions
+    default: op
+
+  rgprotect.timer.bypass:
+    description: Bypass region timers (regions won't expire)
+    default: op
+
+  rgprotect.timer.extend:
+    description: Extend region lifetime
+    default: true
