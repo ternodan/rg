@@ -109,7 +109,6 @@ public class RegionMenuManager {
         regionBordersEnabled.put(regionId, enabled);
         saveBordersState();
     }
-
     /**
      * Создание таймаута для ожидающего удаления
      */
@@ -139,6 +138,7 @@ public class RegionMenuManager {
 
         plugin.getLogger().info("DEBUG TIMEOUT: Создан таймаут на 60 секунд для удаления региона " + regionId);
     }
+
     /**
      * Открытие меню региона для игрока с новыми кнопками
      */
@@ -181,6 +181,9 @@ public class RegionMenuManager {
         // Добавляем кнопку переключения подсветки
         addBordersToggleButton(menu, region);
 
+        // НОВОЕ: Добавляем кнопку защиты региона
+        addFlagProtectionButton(menu, region);
+
         // Добавляем кнопку времени жизни
         addLifetimeButton(menu, region);
 
@@ -204,7 +207,6 @@ public class RegionMenuManager {
 
         plugin.getLogger().info("Игрок " + player.getName() + " открыл меню региона " + region.getId());
     }
-
     /**
      * Добавляет кнопку расширения региона
      */
@@ -294,6 +296,7 @@ public class RegionMenuManager {
         item.setItemMeta(meta);
         menu.setItem(slot, item);
     }
+
     /**
      * Добавление кнопки переключения подсветки
      */
@@ -334,6 +337,67 @@ public class RegionMenuManager {
         menu.setItem(slot, item);
     }
 
+    /**
+     * НОВОЕ: Добавление кнопки защиты региона
+     */
+    private void addFlagProtectionButton(Inventory menu, ProtectedRegion region) {
+        if (!plugin.getConfig().getBoolean("flag-protection.enabled", true)) {
+            return;
+        }
+
+        int slot = plugin.getConfig().getInt("menu.items.flag-protection.slot", 12);
+        String materialName = plugin.getConfig().getString("menu.items.flag-protection.material", "SHIELD");
+        String name = plugin.getConfig().getString("menu.items.flag-protection.name", "&e&lЗащита региона");
+        List<String> configLore = plugin.getConfig().getStringList("menu.items.flag-protection.lore");
+
+        Material material;
+        try {
+            material = Material.valueOf(materialName);
+        } catch (IllegalArgumentException e) {
+            material = Material.SHIELD;
+        }
+
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', name));
+
+        List<String> lore = new ArrayList<>();
+        for (String line : configLore) {
+            lore.add(ChatColor.translateAlternateColorCodes('&', line));
+        }
+
+        // Показываем активные флаги
+        String regionId = region.getId();
+        if (plugin.getFlagProtectionManager() != null) {
+            boolean hasActiveFlags = false;
+            if (plugin.getConfig().contains("flag-protection.flags")) {
+                for (String flagKey : plugin.getConfig().getConfigurationSection("flag-protection.flags").getKeys(false)) {
+                    if (plugin.getFlagProtectionManager().isFlagActive(regionId, flagKey)) {
+                        if (!hasActiveFlags) {
+                            lore.add("");
+                            lore.add(ChatColor.GREEN + "Активные флаги:");
+                            hasActiveFlags = true;
+                        }
+                        String flagName = plugin.getConfig().getString("flag-protection.flags." + flagKey + ".name", flagKey);
+                        String remainingTime = plugin.getFlagProtectionManager().getFormattedRemainingTime(regionId, flagKey);
+                        lore.add(ChatColor.WHITE + "• " + flagName + " (" + remainingTime + ")");
+                    }
+                }
+            }
+
+            if (!hasActiveFlags) {
+                lore.add("");
+                lore.add(ChatColor.GRAY + "Нет активных флагов");
+            }
+        }
+
+        lore.add("");
+        lore.add(ChatColor.YELLOW + "Нажмите для управления!");
+
+        meta.setLore(lore);
+        item.setItemMeta(meta);
+        menu.setItem(slot, item);
+    }
     /**
      * Добавление кнопки времени жизни
      */
@@ -460,6 +524,7 @@ public class RegionMenuManager {
         item.setItemMeta(meta);
         menu.setItem(slot, item);
     }
+
     /**
      * Добавляет кнопку удаления региона
      */
@@ -523,7 +588,7 @@ public class RegionMenuManager {
     }
 
     /**
-     * Обработчик кликов с поддержкой всех кнопок
+     * Обработчик кликов с поддержкой всех кнопок включая защиту региона
      */
     public boolean handleMenuClick(Player player, int slot, ItemStack clickedItem) {
         plugin.getLogger().info("DEBUG MENU: Игрок " + player.getName() + " нажал слот " + slot);
@@ -549,6 +614,8 @@ public class RegionMenuManager {
         int bordersToggleSlot = plugin.getConfig().getInt("menu.items.borders-toggle.slot", 20);
         int lifetimeSlot = plugin.getConfig().getInt("menu.items.lifetime.slot", 24);
         int heightExpansionSlot = plugin.getConfig().getInt("menu.items.height-expansion.slot", 16);
+        // НОВОЕ: Слот кнопки защиты региона
+        int flagProtectionSlot = plugin.getConfig().getInt("menu.items.flag-protection.slot", 12);
 
         if (slot == expandSlot) {
             handleExpandClick(player, region);
@@ -565,11 +632,13 @@ public class RegionMenuManager {
             handleLifetimeClick(player, region);
         } else if (slot == heightExpansionSlot) {
             handleHeightExpansionClick(player, region);
+        } else if (slot == flagProtectionSlot) {
+            // НОВОЕ: Обработка клика по кнопке защиты региона
+            handleFlagProtectionClick(player, region);
         }
 
         return true;
     }
-
     /**
      * Обработка клика по информационной кнопке
      */
@@ -599,7 +668,30 @@ public class RegionMenuManager {
         } else {
             player.sendMessage(ChatColor.YELLOW + "Расширение по высоте: " + ChatColor.GRAY + "Неактивно");
         }
+
+        // НОВОЕ: Показываем информацию об активных флагах
+        if (plugin.getFlagProtectionManager() != null) {
+            boolean hasActiveFlags = false;
+            if (plugin.getConfig().contains("flag-protection.flags")) {
+                for (String flagKey : plugin.getConfig().getConfigurationSection("flag-protection.flags").getKeys(false)) {
+                    if (plugin.getFlagProtectionManager().isFlagActive(regionId, flagKey)) {
+                        if (!hasActiveFlags) {
+                            player.sendMessage(ChatColor.YELLOW + "Активные флаги:");
+                            hasActiveFlags = true;
+                        }
+                        String flagName = plugin.getConfig().getString("flag-protection.flags." + flagKey + ".name", flagKey);
+                        String remainingTime = plugin.getFlagProtectionManager().getFormattedRemainingTime(regionId, flagKey);
+                        player.sendMessage(ChatColor.WHITE + "  • " + flagName + ": " + remainingTime);
+                    }
+                }
+            }
+
+            if (!hasActiveFlags) {
+                player.sendMessage(ChatColor.YELLOW + "Защитные флаги: " + ChatColor.GRAY + "Неактивны");
+            }
+        }
     }
+
     /**
      * Обработка клика по кнопке переключения подсветки
      */
@@ -624,6 +716,25 @@ public class RegionMenuManager {
 
         player.closeInventory();
         Bukkit.getScheduler().runTaskLater(plugin, () -> openRegionMenu(player, region), 1L);
+    }
+
+    /**
+     * НОВОЕ: Обработка клика по кнопке защиты региона
+     */
+    private void handleFlagProtectionClick(Player player, ProtectedRegion region) {
+        if (!plugin.getConfig().getBoolean("flag-protection.enabled", true)) {
+            player.sendMessage(ChatColor.RED + "Система защитных флагов отключена!");
+            return;
+        }
+
+        player.closeInventory();
+
+        // Проверка с null safety
+        if (plugin.getFlagProtectionMenu() != null) {
+            plugin.getFlagProtectionMenu().openFlagProtectionMenu(player, region);
+        } else {
+            player.sendMessage(ChatColor.RED + "Меню защиты региона недоступно!");
+        }
     }
 
     /**
@@ -787,6 +898,7 @@ public class RegionMenuManager {
 
         plugin.getLogger().info("РАСШИРЕНИЕ: Коллизия для " + regionId + " до уровня " + newLevel);
     }
+
     /**
      * Метод для детального анализа коллизий при расширении
      */
@@ -859,7 +971,6 @@ public class RegionMenuManager {
             plugin.getLogger().severe("Ошибка в analyzeExpansionCollisions: " + e.getMessage());
         }
     }
-
     /**
      * Обработка клика по кнопке удаления с таймаутом
      */
@@ -895,6 +1006,7 @@ public class RegionMenuManager {
 
         plugin.getLogger().info("DEBUG DELETE CLICK: Меню закрыто, ожидаем подтверждения в чате");
     }
+
     /**
      * Метод обработки подтверждения в чате
      */
@@ -1044,6 +1156,12 @@ public class RegionMenuManager {
                 plugin.getLogger().info("DEBUG DELETE: Расширение по высоте отключено");
             }
 
+            // НОВОЕ: Отключаем защитные флаги если есть
+            if (plugin.getFlagProtectionManager() != null) {
+                // Здесь можно добавить логику очистки флагов при удалении региона
+                plugin.getLogger().info("DEBUG DELETE: Проверка защитных флагов...");
+            }
+
             plugin.getLogger().info("DEBUG DELETE: Удаляем центральный блок...");
 
             // Удаляем центральный блок
@@ -1084,453 +1202,463 @@ public class RegionMenuManager {
             throw new RuntimeException("Ошибка удаления региона", e);
         }
     }
-    // Вспомогательные методы для удаления
-    private void removeCenterBlockDirectly(ProtectedRegion region, org.bukkit.World world) {
+    translateAlternateColorCodes('&', deleteMessage));
+
+} catch (Exception e) {
+        plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА при удалении региона " + regionId + ": " + e.getMessage());
+        e.printStackTrace();
+            player.sendMessage(ChatColor.RED + "Произошла критическая ошибка при удалении региона!");
+            throw new RuntimeException("Ошибка удаления региона", e);
+        }
+                }
+
+// Вспомогательные методы для удаления
+private void removeCenterBlockDirectly(ProtectedRegion region, org.bukkit.World world) {
+    try {
+        int centerX = (region.getMinimumPoint().x() + region.getMaximumPoint().x()) / 2;
+        int centerY = (region.getMinimumPoint().y() + region.getMaximumPoint().y()) / 2;
+        int centerZ = (region.getMinimumPoint().z() + region.getMaximumPoint().z()) / 2;
+
+        org.bukkit.Location centerLoc = new org.bukkit.Location(world, centerX, centerY, centerZ);
+        org.bukkit.block.Block centerBlock = centerLoc.getBlock();
+
+        Material protectMaterial;
         try {
-            int centerX = (region.getMinimumPoint().x() + region.getMaximumPoint().x()) / 2;
+            protectMaterial = Material.valueOf(
+                    plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+        } catch (IllegalArgumentException e) {
+            protectMaterial = Material.DIAMOND_BLOCK;
+        }
+
+        if (centerBlock.getType() == protectMaterial) {
+            centerBlock.setType(Material.AIR);
+        }
+    } catch (Exception e) {
+        plugin.getLogger().warning("Ошибка при удалении центрального блока: " + e.getMessage());
+    }
+}
+
+private void giveProtectBlockBackDirectly(Player player, String ownerName) {
+    try {
+        Material blockType;
+        try {
+            blockType = Material.valueOf(
+                    plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+        } catch (IllegalArgumentException e) {
+            blockType = Material.DIAMOND_BLOCK;
+        }
+
+        ItemStack protectBlock = new ItemStack(blockType, 1);
+        ItemMeta meta = protectBlock.getItemMeta();
+
+        String displayName = plugin.getConfig().getString("protect-block.display-name", "&aБлок привата")
+                .replace("{player}", ownerName);
+        meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', displayName));
+
+        List<String> lore = plugin.getConfig().getStringList("protect-block.lore");
+        if (!lore.isEmpty()) {
+            List<String> newLore = new ArrayList<>();
+            for (String line : lore) {
+                newLore.add(ChatColor.translateAlternateColorCodes('&',
+                        line.replace("{player}", ownerName)));
+            }
+            newLore.add(ChatColor.DARK_GRAY + "RGProtect:" + ownerName);
+            meta.setLore(newLore);
+        }
+
+        protectBlock.setItemMeta(meta);
+
+        if (player.getInventory().firstEmpty() != -1) {
+            player.getInventory().addItem(protectBlock);
+            player.sendMessage(ChatColor.GREEN + "Блок привата возвращен в инвентарь!");
+        } else {
+            player.getWorld().dropItemNaturally(player.getLocation(), protectBlock);
+            player.sendMessage(ChatColor.YELLOW + "Блок привата выпал на землю - инвентарь полон!");
+        }
+    } catch (Exception e) {
+        plugin.getLogger().warning("Ошибка при возврате блока: " + e.getMessage());
+    }
+}
+
+/**
+ * Расширяет регион до указанного уровня
+ */
+private boolean expandRegion(ProtectedRegion region, int level) {
+    try {
+        if (!(region instanceof com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion)) {
+            return false;
+        }
+
+        String regionId = region.getId();
+
+        // Проверяем расширение по высоте
+        boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
+                plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+        boolean hadBordersEnabled = isRegionBordersEnabled(regionId);
+
+        plugin.getLogger().info("DEBUG EXPAND: Регион " + regionId + " расширен по высоте: " + hasHeightExpansion);
+        plugin.getLogger().info("DEBUG EXPAND: Подсветка включена: " + hadBordersEnabled);
+
+        // Получаем ОРИГИНАЛЬНЫЕ размеры базового региона
+        int baseX, baseY, baseZ;
+
+        if (hasHeightExpansion) {
+            // Используем размеры из конфига как базовые
+            baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
+            baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+            baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
+            plugin.getLogger().info("DEBUG EXPAND: Базовые размеры из конфига: " + baseX + "x" + baseY + "x" + baseZ);
+        } else {
+            // Обычный регион - вычисляем текущие размеры
+            baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
+            baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+            baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
+            plugin.getLogger().info("DEBUG EXPAND: Обычный регион, базовые размеры: " + baseX + "x" + baseY + "x" + baseZ);
+        }
+
+        // Вычисляем новые размеры по ширине (X/Z)
+        int newSizeX = baseX + (level * 2);
+        int newSizeZ = baseZ + (level * 2);
+
+        // Высота зависит от состояния расширения
+        int newMinY, newMaxY;
+
+        if (hasHeightExpansion) {
+            // Регион расширен по высоте - сохраняем расширенную высоту
+            org.bukkit.World world = findWorldForRegion(regionId);
+            if (world != null) {
+                newMinY = world.getMinHeight();
+                newMaxY = world.getMaxHeight() - 1;
+                plugin.getLogger().info("DEBUG EXPAND: Сохраняем расширенную высоту: " + newMinY + " -> " + newMaxY);
+            } else {
+                // Фолбэк на текущие границы
+                newMinY = region.getMinimumPoint().y();
+                newMaxY = region.getMaximumPoint().y();
+            }
+        } else {
+            // Обычный регион - используем базовую высоту
+            int newSizeY = baseY + (level * 2);
             int centerY = (region.getMinimumPoint().y() + region.getMaximumPoint().y()) / 2;
-            int centerZ = (region.getMinimumPoint().z() + region.getMaximumPoint().z()) / 2;
-
-            org.bukkit.Location centerLoc = new org.bukkit.Location(world, centerX, centerY, centerZ);
-            org.bukkit.block.Block centerBlock = centerLoc.getBlock();
-
-            Material protectMaterial;
-            try {
-                protectMaterial = Material.valueOf(
-                        plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
-            } catch (IllegalArgumentException e) {
-                protectMaterial = Material.DIAMOND_BLOCK;
-            }
-
-            if (centerBlock.getType() == protectMaterial) {
-                centerBlock.setType(Material.AIR);
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Ошибка при удалении центрального блока: " + e.getMessage());
+            int radiusY = (newSizeY - 1) / 2;
+            newMinY = centerY - radiusY;
+            newMaxY = centerY + radiusY;
+            plugin.getLogger().info("DEBUG EXPAND: Обычная высота: " + newMinY + " -> " + newMaxY);
         }
-    }
 
-    private void giveProtectBlockBackDirectly(Player player, String ownerName) {
-        try {
-            Material blockType;
-            try {
-                blockType = Material.valueOf(
-                        plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
-            } catch (IllegalArgumentException e) {
-                blockType = Material.DIAMOND_BLOCK;
-            }
+        // Вычисляем центр на основе ТЕКУЩИХ границ региона
+        int centerX = (region.getMinimumPoint().x() + region.getMaximumPoint().x()) / 2;
+        int centerZ = (region.getMinimumPoint().z() + region.getMaximumPoint().z()) / 2;
 
-            ItemStack protectBlock = new ItemStack(blockType, 1);
-            ItemMeta meta = protectBlock.getItemMeta();
+        int radiusX = (newSizeX - 1) / 2;
+        int radiusZ = (newSizeZ - 1) / 2;
 
-            String displayName = plugin.getConfig().getString("protect-block.display-name", "&aБлок привата")
-                    .replace("{player}", ownerName);
-            meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', displayName));
+        com.sk89q.worldedit.math.BlockVector3 newMin = com.sk89q.worldedit.math.BlockVector3.at(
+                centerX - radiusX, newMinY, centerZ - radiusZ);
+        com.sk89q.worldedit.math.BlockVector3 newMax = com.sk89q.worldedit.math.BlockVector3.at(
+                centerX + radiusX, newMaxY, centerZ + radiusZ);
 
-            List<String> lore = plugin.getConfig().getStringList("protect-block.lore");
-            if (!lore.isEmpty()) {
-                List<String> newLore = new ArrayList<>();
-                for (String line : lore) {
-                    newLore.add(ChatColor.translateAlternateColorCodes('&',
-                            line.replace("{player}", ownerName)));
-                }
-                newLore.add(ChatColor.DARK_GRAY + "RGProtect:" + ownerName);
-                meta.setLore(newLore);
-            }
+        plugin.getLogger().info("DEBUG EXPAND: Новые границы региона:");
+        plugin.getLogger().info("DEBUG EXPAND: Центр: " + centerX + "," + centerZ);
+        plugin.getLogger().info("DEBUG EXPAND: Новые размеры: " + newSizeX + "x" + (newMaxY - newMinY + 1) + "x" + newSizeZ);
+        plugin.getLogger().info("DEBUG EXPAND: Новые границы: " + newMin + " -> " + newMax);
 
-            protectBlock.setItemMeta(meta);
+        // Создаем новый регион с новыми размерами
+        com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion newRegion =
+                new com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion(
+                        region.getId(), newMin, newMax);
 
-            if (player.getInventory().firstEmpty() != -1) {
-                player.getInventory().addItem(protectBlock);
-                player.sendMessage(ChatColor.GREEN + "Блок привата возвращен в инвентарь!");
-            } else {
-                player.getWorld().dropItemNaturally(player.getLocation(), protectBlock);
-                player.sendMessage(ChatColor.YELLOW + "Блок привата выпал на землю - инвентарь полон!");
-            }
-        } catch (Exception e) {
-            plugin.getLogger().warning("Ошибка при возврате блока: " + e.getMessage());
+        // Копируем ВСЕ параметры региона
+        newRegion.setOwners(region.getOwners());
+        newRegion.setMembers(region.getMembers());
+        newRegion.setFlags(region.getFlags());
+        newRegion.setPriority(region.getPriority());
+
+        org.bukkit.World world = findWorldForRegion(region.getId());
+        if (world == null) {
+            plugin.getLogger().severe("DEBUG EXPAND: Мир не найден для региона " + regionId);
+            return false;
         }
-    }
-    /**
-     * Расширяет регион до указанного уровня
-     */
-    private boolean expandRegion(ProtectedRegion region, int level) {
+
+        Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
+        if (regionManager == null) {
+            plugin.getLogger().severe("DEBUG EXPAND: RegionManager не найден");
+            return false;
+        }
+
         try {
-            if (!(region instanceof com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion)) {
-                return false;
-            }
+            // АТОМАРНАЯ замена региона
+            java.lang.reflect.Method removeRegionMethod = regionManager.getClass()
+                    .getMethod("removeRegion", String.class);
+            java.lang.reflect.Method addRegionMethod = regionManager.getClass()
+                    .getMethod("addRegion", com.sk89q.worldguard.protection.regions.ProtectedRegion.class);
+            java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
 
-            String regionId = region.getId();
+            // Удаляем старый регион
+            removeRegionMethod.invoke(regionManager, region.getId());
+            plugin.getLogger().info("DEBUG EXPAND: Старый регион удален");
 
-            // Проверяем расширение по высоте
-            boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
-                    plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
-            boolean hadBordersEnabled = isRegionBordersEnabled(regionId);
+            // Добавляем новый регион
+            addRegionMethod.invoke(regionManager, newRegion);
+            plugin.getLogger().info("DEBUG EXPAND: Новый регион добавлен");
 
-            plugin.getLogger().info("DEBUG EXPAND: Регион " + regionId + " расширен по высоте: " + hasHeightExpansion);
-            plugin.getLogger().info("DEBUG EXPAND: Подсветка включена: " + hadBordersEnabled);
+            // Сохраняем изменения
+            saveMethod.invoke(regionManager);
+            plugin.getLogger().info("DEBUG EXPAND: Изменения сохранены");
 
-            // Получаем ОРИГИНАЛЬНЫЕ размеры базового региона
-            int baseX, baseY, baseZ;
+            // Правильно обрабатываем границы для всех типов регионов
+            if (hadBordersEnabled) {
+                plugin.getLogger().info("DEBUG EXPAND: Подсветка включена - обновляем границы");
 
-            if (hasHeightExpansion) {
-                // Используем размеры из конфига как базовые
-                baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
-                baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
-                baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
-                plugin.getLogger().info("DEBUG EXPAND: Базовые размеры из конфига: " + baseX + "x" + baseY + "x" + baseZ);
+                // Удаляем старые границы
+                plugin.getVisualizationManager().removeRegionBorders(regionId);
+                plugin.getLogger().info("DEBUG EXPAND: Старые границы удалены");
+
+                // Пересоздаем границы для НОВОГО региона
+                plugin.getVisualizationManager().createRegionBorders(newRegion, world);
+                plugin.getLogger().info("DEBUG EXPAND: ✅ Новые границы созданы для расширенного региона");
+
+                // Проверяем результат
+                boolean hasBorders = plugin.getVisualizationManager().hasRegionBorders(regionId);
+                plugin.getLogger().info("DEBUG EXPAND: Границы после пересоздания: " + hasBorders);
             } else {
-                // Обычный регион - вычисляем текущие размеры
-                baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
-                baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
-                baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
-                plugin.getLogger().info("DEBUG EXPAND: Обычный регион, базовые размеры: " + baseX + "x" + baseY + "x" + baseZ);
+                plugin.getLogger().info("DEBUG EXPAND: Подсветка выключена - границы не создаем");
             }
 
-            // Вычисляем новые размеры по ширине (X/Z)
-            int newSizeX = baseX + (level * 2);
-            int newSizeZ = baseZ + (level * 2);
+            plugin.getLogger().info("DEBUG EXPAND: Регион " + regionId + " успешно расширен до уровня " + level);
+            return true;
 
-            // Высота зависит от состояния расширения
-            int newMinY, newMaxY;
+        } catch (Exception e) {
+            plugin.getLogger().severe("DEBUG EXPAND: Ошибка при замене региона: " + e.getMessage());
+            e.printStackTrace();
 
-            if (hasHeightExpansion) {
-                // Регион расширен по высоте - сохраняем расширенную высоту
-                org.bukkit.World world = findWorldForRegion(regionId);
-                if (world != null) {
-                    newMinY = world.getMinHeight();
-                    newMaxY = world.getMaxHeight() - 1;
-                    plugin.getLogger().info("DEBUG EXPAND: Сохраняем расширенную высоту: " + newMinY + " -> " + newMaxY);
-                } else {
-                    // Фолбэк на текущие границы
-                    newMinY = region.getMinimumPoint().y();
-                    newMaxY = region.getMaximumPoint().y();
-                }
-            } else {
-                // Обычный регион - используем базовую высоту
-                int newSizeY = baseY + (level * 2);
-                int centerY = (region.getMinimumPoint().y() + region.getMaximumPoint().y()) / 2;
-                int radiusY = (newSizeY - 1) / 2;
-                newMinY = centerY - radiusY;
-                newMaxY = centerY + radiusY;
-                plugin.getLogger().info("DEBUG EXPAND: Обычная высота: " + newMinY + " -> " + newMaxY);
-            }
-
-            // Вычисляем центр на основе ТЕКУЩИХ границ региона
-            int centerX = (region.getMinimumPoint().x() + region.getMaximumPoint().x()) / 2;
-            int centerZ = (region.getMinimumPoint().z() + region.getMaximumPoint().z()) / 2;
-
-            int radiusX = (newSizeX - 1) / 2;
-            int radiusZ = (newSizeZ - 1) / 2;
-
-            com.sk89q.worldedit.math.BlockVector3 newMin = com.sk89q.worldedit.math.BlockVector3.at(
-                    centerX - radiusX, newMinY, centerZ - radiusZ);
-            com.sk89q.worldedit.math.BlockVector3 newMax = com.sk89q.worldedit.math.BlockVector3.at(
-                    centerX + radiusX, newMaxY, centerZ + radiusZ);
-
-            plugin.getLogger().info("DEBUG EXPAND: Новые границы региона:");
-            plugin.getLogger().info("DEBUG EXPAND: Центр: " + centerX + "," + centerZ);
-            plugin.getLogger().info("DEBUG EXPAND: Новые размеры: " + newSizeX + "x" + (newMaxY - newMinY + 1) + "x" + newSizeZ);
-            plugin.getLogger().info("DEBUG EXPAND: Новые границы: " + newMin + " -> " + newMax);
-
-            // Создаем новый регион с новыми размерами
-            com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion newRegion =
-                    new com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion(
-                            region.getId(), newMin, newMax);
-
-            // Копируем ВСЕ параметры региона
-            newRegion.setOwners(region.getOwners());
-            newRegion.setMembers(region.getMembers());
-            newRegion.setFlags(region.getFlags());
-            newRegion.setPriority(region.getPriority());
-
-            org.bukkit.World world = findWorldForRegion(region.getId());
-            if (world == null) {
-                plugin.getLogger().severe("DEBUG EXPAND: Мир не найден для региона " + regionId);
-                return false;
-            }
-
-            Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
-            if (regionManager == null) {
-                plugin.getLogger().severe("DEBUG EXPAND: RegionManager не найден");
-                return false;
-            }
-
+            // Пытаемся восстановить оригинальный регион
             try {
-                // АТОМАРНАЯ замена региона
-                java.lang.reflect.Method removeRegionMethod = regionManager.getClass()
-                        .getMethod("removeRegion", String.class);
                 java.lang.reflect.Method addRegionMethod = regionManager.getClass()
                         .getMethod("addRegion", com.sk89q.worldguard.protection.regions.ProtectedRegion.class);
+                addRegionMethod.invoke(regionManager, region);
+
                 java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
-
-                // Удаляем старый регион
-                removeRegionMethod.invoke(regionManager, region.getId());
-                plugin.getLogger().info("DEBUG EXPAND: Старый регион удален");
-
-                // Добавляем новый регион
-                addRegionMethod.invoke(regionManager, newRegion);
-                plugin.getLogger().info("DEBUG EXPAND: Новый регион добавлен");
-
-                // Сохраняем изменения
                 saveMethod.invoke(regionManager);
-                plugin.getLogger().info("DEBUG EXPAND: Изменения сохранены");
 
-                // Правильно обрабатываем границы для всех типов регионов
-                if (hadBordersEnabled) {
-                    plugin.getLogger().info("DEBUG EXPAND: Подсветка включена - обновляем границы");
-
-                    // Удаляем старые границы
-                    plugin.getVisualizationManager().removeRegionBorders(regionId);
-                    plugin.getLogger().info("DEBUG EXPAND: Старые границы удалены");
-
-                    // Пересоздаем границы для НОВОГО региона
-                    plugin.getVisualizationManager().createRegionBorders(newRegion, world);
-                    plugin.getLogger().info("DEBUG EXPAND: ✅ Новые границы созданы для расширенного региона");
-
-                    // Проверяем результат
-                    boolean hasBorders = plugin.getVisualizationManager().hasRegionBorders(regionId);
-                    plugin.getLogger().info("DEBUG EXPAND: Границы после пересоздания: " + hasBorders);
-                } else {
-                    plugin.getLogger().info("DEBUG EXPAND: Подсветка выключена - границы не создаем");
-                }
-
-                plugin.getLogger().info("DEBUG EXPAND: Регион " + regionId + " успешно расширен до уровня " + level);
-                return true;
-
-            } catch (Exception e) {
-                plugin.getLogger().severe("DEBUG EXPAND: Ошибка при замене региона: " + e.getMessage());
-                e.printStackTrace();
-
-                // Пытаемся восстановить оригинальный регион
-                try {
-                    java.lang.reflect.Method addRegionMethod = regionManager.getClass()
-                            .getMethod("addRegion", com.sk89q.worldguard.protection.regions.ProtectedRegion.class);
-                    addRegionMethod.invoke(regionManager, region);
-
-                    java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
-                    saveMethod.invoke(regionManager);
-
-                    plugin.getLogger().info("DEBUG EXPAND: Оригинальный регион восстановлен после ошибки");
-                } catch (Exception restoreEx) {
-                    plugin.getLogger().severe("DEBUG EXPAND: КРИТИЧЕСКАЯ ОШИБКА: Не удалось восстановить оригинальный регион: " + restoreEx.getMessage());
-                }
-
-                return false;
+                plugin.getLogger().info("DEBUG EXPAND: Оригинальный регион восстановлен после ошибки");
+            } catch (Exception restoreEx) {
+                plugin.getLogger().severe("DEBUG EXPAND: КРИТИЧЕСКАЯ ОШИБКА: Не удалось восстановить оригинальный регион: " + restoreEx.getMessage());
             }
 
-        } catch (Exception e) {
-            plugin.getLogger().severe("DEBUG EXPAND: Ошибка при расширении региона: " + e.getMessage());
-            e.printStackTrace();
             return false;
         }
+
+    } catch (Exception e) {
+        plugin.getLogger().severe("DEBUG EXPAND: Ошибка при расширении региона: " + e.getMessage());
+        e.printStackTrace();
+        return false;
     }
-    /**
-     * Вспомогательный метод для получения планируемого размера
-     */
-    private String getPlannedRegionSizeString(ProtectedRegion region, int newLevel) {
-        int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
-        int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
-        int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
+}
+/**
+ * Вспомогательный метод для получения планируемого размера
+ */
+private String getPlannedRegionSizeString(ProtectedRegion region, int newLevel) {
+    int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
+    int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+    int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
 
-        int newSizeX = baseX + (newLevel * 2);
-        int newSizeY = baseY + (newLevel * 2);
-        int newSizeZ = baseZ + (newLevel * 2);
+    int newSizeX = baseX + (newLevel * 2);
+    int newSizeY = baseY + (newLevel * 2);
+    int newSizeZ = baseZ + (newLevel * 2);
 
-        return newSizeX + "x" + newSizeY + "x" + newSizeZ;
+    return newSizeX + "x" + newSizeY + "x" + newSizeZ;
+}
+
+/**
+ * Вспомогательные методы для проверки пересечений и владельцев
+ */
+private boolean hasRegionIntersection(com.sk89q.worldguard.protection.regions.ProtectedRegion region1,
+                                      com.sk89q.worldguard.protection.regions.ProtectedRegion region2) {
+    com.sk89q.worldedit.math.BlockVector3 min1 = region1.getMinimumPoint();
+    com.sk89q.worldedit.math.BlockVector3 max1 = region1.getMaximumPoint();
+    com.sk89q.worldedit.math.BlockVector3 min2 = region2.getMinimumPoint();
+    com.sk89q.worldedit.math.BlockVector3 max2 = region2.getMaximumPoint();
+
+    return !(max1.x() < min2.x() || min1.x() > max2.x() ||
+            max1.y() < min2.y() || min1.y() > max2.y() ||
+            max1.z() < min2.z() || min1.z() > max2.z());
+}
+
+private String getRegionOwnerName(com.sk89q.worldguard.protection.regions.ProtectedRegion region) {
+    if (!region.getOwners().getUniqueIds().isEmpty()) {
+        java.util.UUID ownerUUID = region.getOwners().getUniqueIds().iterator().next();
+        String ownerName = plugin.getServer().getOfflinePlayer(ownerUUID).getName();
+        return ownerName != null ? ownerName : "Неизвестно";
     }
-
-    /**
-     * Вспомогательные методы для проверки пересечений и владельцев
-     */
-    private boolean hasRegionIntersection(com.sk89q.worldguard.protection.regions.ProtectedRegion region1,
-                                          com.sk89q.worldguard.protection.regions.ProtectedRegion region2) {
-        com.sk89q.worldedit.math.BlockVector3 min1 = region1.getMinimumPoint();
-        com.sk89q.worldedit.math.BlockVector3 max1 = region1.getMaximumPoint();
-        com.sk89q.worldedit.math.BlockVector3 min2 = region2.getMinimumPoint();
-        com.sk89q.worldedit.math.BlockVector3 max2 = region2.getMaximumPoint();
-
-        return !(max1.x() < min2.x() || min1.x() > max2.x() ||
-                max1.y() < min2.y() || min1.y() > max2.y() ||
-                max1.z() < min2.z() || min1.z() > max2.z());
+    if (!region.getOwners().getPlayers().isEmpty()) {
+        return region.getOwners().getPlayers().iterator().next();
     }
+    return "Неизвестно";
+}
 
-    private String getRegionOwnerName(com.sk89q.worldguard.protection.regions.ProtectedRegion region) {
-        if (!region.getOwners().getUniqueIds().isEmpty()) {
-            java.util.UUID ownerUUID = region.getOwners().getUniqueIds().iterator().next();
-            String ownerName = plugin.getServer().getOfflinePlayer(ownerUUID).getName();
-            return ownerName != null ? ownerName : "Неизвестно";
-        }
-        if (!region.getOwners().getPlayers().isEmpty()) {
-            return region.getOwners().getPlayers().iterator().next();
-        }
-        return "Неизвестно";
+private boolean isPlayerOwner(com.sk89q.worldguard.protection.regions.ProtectedRegion region, String playerName) {
+    java.util.UUID playerUUID = getPlayerUUID(playerName);
+    if (playerUUID == null) {
+        return false;
     }
+    return region.getOwners().contains(playerUUID) || region.getOwners().contains(playerName);
+}
 
-    private boolean isPlayerOwner(com.sk89q.worldguard.protection.regions.ProtectedRegion region, String playerName) {
-        java.util.UUID playerUUID = getPlayerUUID(playerName);
-        if (playerUUID == null) {
-            return false;
-        }
-        return region.getOwners().contains(playerUUID) || region.getOwners().contains(playerName);
-    }
-
-    private java.util.UUID getPlayerUUID(String playerName) {
-        try {
-            org.bukkit.entity.Player onlinePlayer = plugin.getServer().getPlayer(playerName);
-            if (onlinePlayer != null) {
-                return onlinePlayer.getUniqueId();
-            } else {
-                return plugin.getServer().getOfflinePlayer(playerName).getUniqueId();
-            }
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String formatPrice(double price) {
-        return price == (long) price ? String.valueOf((long) price) : String.valueOf(price);
-    }
-
-    private int getRegionExpansionLevel(ProtectedRegion region) {
-        int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
-        int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
-        int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
-
-        int currentX = region.getMaximumPoint().x() - region.getMinimumPoint().x() + 1;
-        int currentY = region.getMaximumPoint().y() - region.getMinimumPoint().y() + 1;
-        int currentZ = region.getMaximumPoint().z() - region.getMinimumPoint().z() + 1;
-
-        int levelX = (currentX - baseX) / 2;
-        int levelY = (currentY - baseY) / 2;
-        int levelZ = (currentZ - baseZ) / 2;
-
-        return Math.max(0, Math.min(Math.min(levelX, levelY), levelZ));
-    }
-
-    private double getExpansionPrice(int level) {
-        return plugin.getConfig().getDouble("region-expansion.prices." + level, -1);
-    }
-
-    private String getCurrentRegionSizeString(ProtectedRegion region) {
-        int sizeX = region.getMaximumPoint().x() - region.getMinimumPoint().x() + 1;
-        int sizeY = region.getMaximumPoint().y() - region.getMinimumPoint().y() + 1;
-        int sizeZ = region.getMaximumPoint().z() - region.getMinimumPoint().z() + 1;
-        return sizeX + "x" + sizeY + "x" + sizeZ;
-    }
-
-    private String getNextRegionSizeString(ProtectedRegion region, int currentLevel) {
-        int maxLevel = plugin.getConfig().getInt("region-expansion.max-level", 10);
-        if (currentLevel >= maxLevel) return "Максимум";
-
-        int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
-        int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
-        int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
-
-        int nextLevel = currentLevel + 1;
-        int nextSizeX = baseX + (nextLevel * 2);
-        int nextSizeY = baseY + (nextLevel * 2);
-        int nextSizeZ = baseZ + (nextLevel * 2);
-
-        return nextSizeX + "x" + nextSizeY + "x" + nextSizeZ;
-    }
-
-    private boolean canPlayerAccessRegion(Player player, ProtectedRegion region) {
-        return region.getOwners().contains(player.getUniqueId()) ||
-                region.getOwners().contains(player.getName()) ||
-                region.getMembers().contains(player.getUniqueId()) ||
-                region.getMembers().contains(player.getName()) ||
-                player.hasPermission("rgprotect.admin");
-    }
-
-    private boolean canPlayerDeleteRegion(Player player, ProtectedRegion region) {
-        return player.hasPermission("rgprotect.admin") ||
-                region.getOwners().contains(player.getUniqueId()) ||
-                region.getOwners().contains(player.getName());
-    }
-
-    private ProtectedRegion findRegionById(String regionId) {
-        for (org.bukkit.World world : plugin.getServer().getWorlds()) {
-            try {
-                Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
-                if (regionManager != null) {
-                    java.lang.reflect.Method getRegionMethod = regionManager.getClass().getMethod("getRegion", String.class);
-                    ProtectedRegion region = (ProtectedRegion) getRegionMethod.invoke(regionManager, regionId);
-                    if (region != null) return region;
-                }
-            } catch (Exception e) {
-                // Игнорируем ошибки
-            }
-        }
-        return null;
-    }
-
-    private org.bukkit.World findWorldForRegion(String regionId) {
-        for (org.bukkit.World world : plugin.getServer().getWorlds()) {
-            try {
-                Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
-                if (regionManager != null) {
-                    java.lang.reflect.Method getRegionMethod = regionManager.getClass().getMethod("getRegion", String.class);
-                    ProtectedRegion region = (ProtectedRegion) getRegionMethod.invoke(regionManager, regionId);
-                    if (region != null) return world;
-                }
-            } catch (Exception e) {
-                // Игнорируем ошибки
-            }
-        }
-        return null;
-    }
-
-    // Публичные методы для управления меню
-    public void closeMenuForPlayer(Player player) {
-        openMenus.remove(player.getUniqueId());
-        plugin.getLogger().info("DEBUG CLOSE: Игрок " + player.getName() + " убран из openMenus");
-        plugin.getLogger().info("DEBUG CLOSE: Ожидающее удаление сохранено: " + pendingDeletions.containsKey(player.getUniqueId()));
-    }
-
-    public boolean hasOpenMenu(Player player) {
-        return openMenus.containsKey(player.getUniqueId());
-    }
-
-    public String getOpenMenuRegionId(Player player) {
-        return openMenus.get(player.getUniqueId());
-    }
-
-    public boolean hasPendingDeletion(Player player) {
-        boolean result = pendingDeletions.containsKey(player.getUniqueId());
-        plugin.getLogger().info("DEBUG PENDING CHECK: Игрок " + player.getName() + " имеет ожидающее удаление: " + result);
-        return result;
-    }
-
-    /**
-     * Метод для принудительной очистки ожидающего удаления с отменой таймаута
-     */
-    public void clearPendingDeletion(Player player) {
-        String regionId = pendingDeletions.remove(player.getUniqueId());
-
-        // Отменяем таймаут
-        BukkitTask timeoutTask = pendingDeletionTimeouts.remove(player.getUniqueId());
-        if (timeoutTask != null) {
-            timeoutTask.cancel();
-            plugin.getLogger().info("DEBUG CLEAR: Отменен таймаут для игрока " + player.getName());
-        }
-
-        if (regionId != null) {
-            plugin.getLogger().info("DEBUG CLEAR: Очищено ожидающее удаление региона " + regionId + " для игрока " + player.getName());
+private java.util.UUID getPlayerUUID(String playerName) {
+    try {
+        org.bukkit.entity.Player onlinePlayer = plugin.getServer().getPlayer(playerName);
+        if (onlinePlayer != null) {
+            return onlinePlayer.getUniqueId();
         } else {
-            plugin.getLogger().info("DEBUG CLEAR: У игрока " + player.getName() + " не было ожидающего удаления для очистки");
+            return plugin.getServer().getOfflinePlayer(playerName).getUniqueId();
+        }
+    } catch (Exception e) {
+        return null;
+    }
+}
+
+private String formatPrice(double price) {
+    return price == (long) price ? String.valueOf((long) price) : String.valueOf(price);
+}
+
+private int getRegionExpansionLevel(ProtectedRegion region) {
+    int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
+    int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+    int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
+
+    int currentX = region.getMaximumPoint().x() - region.getMinimumPoint().x() + 1;
+    int currentY = region.getMaximumPoint().y() - region.getMinimumPoint().y() + 1;
+    int currentZ = region.getMaximumPoint().z() - region.getMinimumPoint().z() + 1;
+
+    int levelX = (currentX - baseX) / 2;
+    int levelY = (currentY - baseY) / 2;
+    int levelZ = (currentZ - baseZ) / 2;
+
+    return Math.max(0, Math.min(Math.min(levelX, levelY), levelZ));
+}
+
+private double getExpansionPrice(int level) {
+    return plugin.getConfig().getDouble("region-expansion.prices." + level, -1);
+}
+
+private String getCurrentRegionSizeString(ProtectedRegion region) {
+    int sizeX = region.getMaximumPoint().x() - region.getMinimumPoint().x() + 1;
+    int sizeY = region.getMaximumPoint().y() - region.getMinimumPoint().y() + 1;
+    int sizeZ = region.getMaximumPoint().z() - region.getMinimumPoint().z() + 1;
+    return sizeX + "x" + sizeY + "x" + sizeZ;
+}
+
+private String getNextRegionSizeString(ProtectedRegion region, int currentLevel) {
+    int maxLevel = plugin.getConfig().getInt("region-expansion.max-level", 10);
+    if (currentLevel >= maxLevel) return "Максимум";
+
+    int baseX = plugin.getConfig().getInt("region-expansion.base-size.x", 3);
+    int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+    int baseZ = plugin.getConfig().getInt("region-expansion.base-size.z", 3);
+
+    int nextLevel = currentLevel + 1;
+    int nextSizeX = baseX + (nextLevel * 2);
+    int nextSizeY = baseY + (nextLevel * 2);
+    int nextSizeZ = baseZ + (nextLevel * 2);
+
+    return nextSizeX + "x" + nextSizeY + "x" + nextSizeZ;
+}
+
+private boolean canPlayerAccessRegion(Player player, ProtectedRegion region) {
+    return region.getOwners().contains(player.getUniqueId()) ||
+            region.getOwners().contains(player.getName()) ||
+            region.getMembers().contains(player.getUniqueId()) ||
+            region.getMembers().contains(player.getName()) ||
+            player.hasPermission("rgprotect.admin");
+}
+
+private boolean canPlayerDeleteRegion(Player player, ProtectedRegion region) {
+    return player.hasPermission("rgprotect.admin") ||
+            region.getOwners().contains(player.getUniqueId()) ||
+            region.getOwners().contains(player.getName());
+}
+
+private ProtectedRegion findRegionById(String regionId) {
+    for (org.bukkit.World world : plugin.getServer().getWorlds()) {
+        try {
+            Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
+            if (regionManager != null) {
+                java.lang.reflect.Method getRegionMethod = regionManager.getClass().getMethod("getRegion", String.class);
+                ProtectedRegion region = (ProtectedRegion) getRegionMethod.invoke(regionManager, regionId);
+                if (region != null) return region;
+            }
+        } catch (Exception e) {
+            // Игнорируем ошибки
         }
     }
+    return null;
+}
 
-    /**
-     * Отладочный метод для вывода состояния ожидающих удалений
-     */
-    public void debugPendingDeletions() {
-        plugin.getLogger().info("DEBUG PENDING: Всего ожидающих удалений: " + pendingDeletions.size());
-        for (Map.Entry<UUID, String> entry : pendingDeletions.entrySet()) {
-            Player player = plugin.getServer().getPlayer(entry.getKey());
-            String playerName = player != null ? player.getName() : "OFFLINE";
-            plugin.getLogger().info("DEBUG PENDING: " + playerName + " (" + entry.getKey() + ") -> " + entry.getValue());
+private org.bukkit.World findWorldForRegion(String regionId) {
+    for (org.bukkit.World world : plugin.getServer().getWorlds()) {
+        try {
+            Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
+            if (regionManager != null) {
+                java.lang.reflect.Method getRegionMethod = regionManager.getClass().getMethod("getRegion", String.class);
+                ProtectedRegion region = (ProtectedRegion) getRegionMethod.invoke(regionManager, regionId);
+                if (region != null) return world;
+            }
+        } catch (Exception e) {
+            // Игнорируем ошибки
         }
+    }
+    return null;
+}
+
+// Публичные методы для управления меню
+public void closeMenuForPlayer(Player player) {
+    openMenus.remove(player.getUniqueId());
+    plugin.getLogger().info("DEBUG CLOSE: Игрок " + player.getName() + " убран из openMenus");
+    plugin.getLogger().info("DEBUG CLOSE: Ожидающее удаление сохранено: " + pendingDeletions.containsKey(player.getUniqueId()));
+}
+
+public boolean hasOpenMenu(Player player) {
+    return openMenus.containsKey(player.getUniqueId());
+}
+
+public String getOpenMenuRegionId(Player player) {
+    return openMenus.get(player.getUniqueId());
+}
+
+public boolean hasPendingDeletion(Player player) {
+    boolean result = pendingDeletions.containsKey(player.getUniqueId());
+    plugin.getLogger().info("DEBUG PENDING CHECK: Игрок " + player.getName() + " имеет ожидающее удаление: " + result);
+    return result;
+}
+
+/**
+ * Метод для принудительной очистки ожидающего удаления с отменой таймаута
+ */
+public void clearPendingDeletion(Player player) {
+    String regionId = pendingDeletions.remove(player.getUniqueId());
+
+    // Отменяем таймаут
+    BukkitTask timeoutTask = pendingDeletionTimeouts.remove(player.getUniqueId());
+    if (timeoutTask != null) {
+        timeoutTask.cancel();
+        plugin.getLogger().info("DEBUG CLEAR: Отменен таймаут для игрока " + player.getName());
+    }
+
+    if (regionId != null) {
+        plugin.getLogger().info("DEBUG CLEAR: Очищено ожидающее удаление региона " + regionId + " для игрока " + player.getName());
+    } else {
+        plugin.getLogger().info("DEBUG CLEAR: У игрока " + player.getName() + " не было ожидающего удаления для очистки");
+    }
+}
+
+/**
+ * Отладочный метод для вывода состояния ожидающих удалений
+ */
+public void debugPendingDeletions() {
+    plugin.getLogger().info("DEBUG PENDING: Всего ожидающих удалений: " + pendingDeletions.size());
+    for (Map.Entry<UUID, String> entry : pendingDeletions.entrySet()) {
+        Player player = plugin.getServer().getPlayer(entry.getKey());
+        String playerName = player != null ? player.getName() : "OFFLINE";
+        plugin.getLogger().info("DEBUG PENDING: " + playerName + " (" + entry.getKey() + ") -> " + entry.getValue());
     }
 }
