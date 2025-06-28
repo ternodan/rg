@@ -24,9 +24,31 @@ public class ChatListener implements Listener {
 
         // Логируем для отладки
         plugin.getLogger().info("DEBUG CHAT: Игрок " + player.getName() + " написал: '" + message + "'");
+
+        // НОВАЯ обработка: Проверяем покупку флагов в первую очередь
+        if (plugin.getFlagProtectionMenu() != null && plugin.getFlagProtectionMenu().hasPendingFlagPurchase(player)) {
+            plugin.getLogger().info("DEBUG CHAT: Обрабатываем покупку флага для игрока " + player.getName());
+
+            // Отменяем чат
+            event.setCancelled(true);
+
+            // Выполняем в главном потоке
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+                try {
+                    plugin.getFlagProtectionMenu().handleFlagPurchaseChat(player, message);
+                } catch (Exception e) {
+                    plugin.getLogger().severe("Ошибка при обработке покупки флага: " + e.getMessage());
+                    e.printStackTrace();
+                    player.sendMessage(ChatColor.RED + "Произошла ошибка при обработке покупки флага!");
+                    plugin.getFlagProtectionMenu().clearPendingFlagPurchase(player);
+                }
+            });
+            return;
+        }
+
+        // СУЩЕСТВУЮЩАЯ обработка: Проверяем ожидающее удаление региона
         plugin.getLogger().info("DEBUG CHAT: Есть ожидающее удаление: " + plugin.getRegionMenuManager().hasPendingDeletion(player));
 
-        // ИСПРАВЛЕНИЕ: Проверяем есть ли ожидающее удаление
         if (plugin.getRegionMenuManager().hasPendingDeletion(player)) {
             plugin.getLogger().info("DEBUG CHAT: Обрабатываем команду удаления: '" + message + "'");
 
@@ -52,7 +74,7 @@ public class ChatListener implements Listener {
 
                 plugin.getLogger().info("DEBUG CHAT: Команда распознана, отменяем чат и выполняем в главном потоке");
 
-                // ИСПРАВЛЕНИЕ: Выполняем в главном потоке с дополнительной проверкой
+                // Выполняем в главном потоке с дополнительной проверкой
                 org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
                     try {
                         // Дополнительная проверка что игрок все еще онлайн

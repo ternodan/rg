@@ -1,20 +1,13 @@
 package com.yourplugin.rGG;
 
-import com.yourplugin.rGG.listeners.*;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.RegisteredServiceProvider;
 
 import net.milkbowl.vault.economy.Economy;
 
 import com.yourplugin.rGG.commands.RGProtectCommand;
-import com.yourplugin.rGG.managers.HologramManager;
-import com.yourplugin.rGG.managers.VisualizationManager;
-import com.yourplugin.rGG.managers.ProtectRegionManager;
-import com.yourplugin.rGG.managers.RegionMenuManager;
-import com.yourplugin.rGG.managers.RegionTimerManager;
-import com.yourplugin.rGG.managers.RegionLifetimeMenu;
-import com.yourplugin.rGG.managers.HeightExpansionManager;
-import com.yourplugin.rGG.managers.HeightExpansionMenu;
+import com.yourplugin.rGG.listeners.*;
+import com.yourplugin.rGG.managers.*;
 
 import java.util.List;
 
@@ -30,6 +23,10 @@ public class RGProtectPlugin extends JavaPlugin {
     private RegionLifetimeMenu regionLifetimeMenu;
     private HeightExpansionManager heightExpansionManager;
     private HeightExpansionMenu heightExpansionMenu;
+    // НОВЫЕ менеджеры для защитных флагов
+    private FlagProtectionManager flagProtectionManager;
+    private FlagProtectionMenu flagProtectionMenu;
+
     @Override
     public void onEnable() {
         instance = this;
@@ -55,6 +52,11 @@ public class RGProtectPlugin extends JavaPlugin {
         protectRegionManager = new ProtectRegionManager(this);
         regionTimerManager = new RegionTimerManager(this); // ВАЖНО: до RegionMenuManager
         heightExpansionManager = new HeightExpansionManager(this);
+
+        // НОВЫЕ менеджеры защитных флагов
+        flagProtectionManager = new FlagProtectionManager(this);
+        flagProtectionMenu = new FlagProtectionMenu(this);
+
         regionMenuManager = new RegionMenuManager(this);
         regionLifetimeMenu = new RegionLifetimeMenu(this);
         heightExpansionMenu = new HeightExpansionMenu(this);
@@ -70,6 +72,9 @@ public class RGProtectPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new ChatListener(this), this);
         getServer().getPluginManager().registerEvents(new LifetimeMenuListener(this), this);
         getServer().getPluginManager().registerEvents(new HeightExpansionMenuListener(this), this);
+        // НОВЫЙ слушатель для меню защитных флагов
+        getServer().getPluginManager().registerEvents(new FlagProtectionMenuListener(this), this);
+
         getLogger().info("RGProtect успешно загружен!");
         getLogger().info("Новая система физических границ из красной шерсти активна!");
         getLogger().info("Система меню и расширения регионов активна!");
@@ -92,7 +97,7 @@ public class RGProtectPlugin extends JavaPlugin {
         boolean bordersEnabledByDefault = getConfig().getBoolean("region-creation.borders-enabled-by-default", true);
         getLogger().info("Подсветка границ для новых регионов: " + (bordersEnabledByDefault ? "включена" : "выключена"));
 
-        // НОВОЕ: Информация о таймерах
+        // Информация о таймерах
         if (getConfig().getBoolean("region-timer.enabled", true)) {
             int initialMinutes = getConfig().getInt("region-timer.initial-lifetime-minutes", 5);
             getLogger().info("Система таймеров регионов: включена (начальное время: " + initialMinutes + " минут)");
@@ -100,13 +105,21 @@ public class RGProtectPlugin extends JavaPlugin {
             getLogger().info("Система таймеров регионов: отключена");
         }
 
-        // НОВОЕ: Информация о расширении по высоте
+        // Информация о расширении по высоте
         if (getConfig().getBoolean("height-expansion.enabled", true)) {
             getLogger().info("Система временного расширения по высоте: включена");
         } else {
             getLogger().info("Система временного расширения по высоте: отключена");
         }
-        // НОВОЕ: Информация о настройках голограмм
+
+        // НОВАЯ информация о защитных флагах
+        if (getConfig().getBoolean("flag-protection.enabled", true)) {
+            getLogger().info("Система защитных флагов: включена");
+        } else {
+            getLogger().info("Система защитных флагов: отключена");
+        }
+
+        // Информация о настройках голограмм
         if (getConfig().getBoolean("hologram.enabled", true)) {
             getLogger().info("Система голограмм: включена");
             List<String> hologramLines = getConfig().getStringList("hologram.lines");
@@ -134,7 +147,15 @@ public class RGProtectPlugin extends JavaPlugin {
         getServer().getScheduler().runTaskLater(this, () -> {
             restoreRegionBorders();
         }, 20L);
+
+        // НОВАЯ задача проверки таймаутов покупок флагов
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            if (flagProtectionMenu != null) {
+                flagProtectionMenu.checkPurchaseTimeouts();
+            }
+        }, 20L, 20L); // Каждую секунду
     }
+
     @Override
     public void onDisable() {
         // ВАЖНО: Сохраняем и останавливаем таймеры
@@ -145,6 +166,11 @@ public class RGProtectPlugin extends JavaPlugin {
         // ВАЖНО: Сохраняем и останавливаем менеджер расширений по высоте
         if (heightExpansionManager != null) {
             heightExpansionManager.shutdown();
+        }
+
+        // НОВОЕ: Сохраняем и останавливаем менеджер защитных флагов
+        if (flagProtectionManager != null) {
+            flagProtectionManager.shutdown();
         }
 
         // Удаляем все физические границы из красной шерсти
@@ -161,6 +187,9 @@ public class RGProtectPlugin extends JavaPlugin {
 
         getLogger().info("RGProtect отключен! Все границы регионов восстановлены.");
     }
+
+    // ... (остальные методы остаются без изменений)
+
     /**
      * Восстановление границ регионов при загрузке плагина
      */
@@ -225,6 +254,7 @@ public class RGProtectPlugin extends JavaPlugin {
         getLogger().info("Восстановление завершено: " + restoredBorders + " границ восстановлено, " +
                 skippedBorders + " пропущено (всего регионов: " + totalRegions + ")");
     }
+
     private boolean checkDependencies() {
         return getServer().getPluginManager().getPlugin("WorldGuard") != null &&
                 getServer().getPluginManager().getPlugin("WorldEdit") != null &&
@@ -242,7 +272,8 @@ public class RGProtectPlugin extends JavaPlugin {
         economy = rsp.getProvider();
         return economy != null;
     }
-    // НОВЫЕ геттеры для менеджеров:
+
+    // Геттеры для существующих менеджеров
 
     public RegionTimerManager getRegionTimerManager() {
         return regionTimerManager;
@@ -276,7 +307,21 @@ public class RGProtectPlugin extends JavaPlugin {
         return regionMenuManager;
     }
 
+    // НОВЫЕ геттеры для менеджеров защитных флагов
+
+    public FlagProtectionManager getFlagProtectionManager() {
+        return flagProtectionManager;
+    }
+
+    public FlagProtectionMenu getFlagProtectionMenu() {
+        return flagProtectionMenu;
+    }
+
     public net.milkbowl.vault.economy.Economy getEconomy() {
         return economy;
+    }
+
+    public static RGProtectPlugin getInstance() {
+        return instance;
     }
 }
