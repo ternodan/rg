@@ -89,7 +89,13 @@ public class BlockInteractListener implements Listener {
      * ИСПРАВЛЕННЫЙ метод проверки центрального блока
      * Теперь правильно вычисляет центр для расширенных регионов
      */
+    /**
+     * ИСПРАВЛЕННЫЙ метод проверки центрального блока для BlockInteractListener
+     * Учитывает расширение по высоте - игнорирует Y координату
+     */
     private boolean isCenterBlock(Location blockLocation, ProtectedRegion region) {
+        String regionId = region.getId();
+
         // Получаем границы региона
         int regionMinX = region.getMinimumPoint().x();
         int regionMaxX = region.getMaximumPoint().x();
@@ -98,15 +104,48 @@ public class BlockInteractListener implements Listener {
         int regionMinZ = region.getMinimumPoint().z();
         int regionMaxZ = region.getMaximumPoint().z();
 
-        // ИСПРАВЛЕНИЕ: Правильно вычисляем центр для любого размера региона
-        // Центр - это середина между min и max (с учетом четных/нечетных размеров)
+        // ИСПРАВЛЕНИЕ: Вычисляем ОРИГИНАЛЬНЫЙ центр (игнорируем возможное расширение по высоте)
         int centerX = (regionMinX + regionMaxX) / 2;
-        int centerY = (regionMinY + regionMaxY) / 2;
         int centerZ = (regionMinZ + regionMaxZ) / 2;
+
+        // Проверяем X и Z координаты сначала
+        if (blockLocation.getBlockX() != centerX || blockLocation.getBlockZ() != centerZ) {
+            return false; // Не в центре по X/Z
+        }
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Для расширенных по высоте регионов
+        // проверяем, является ли кликнутый блок блоком привата
+        try {
+            org.bukkit.Material protectMaterial = org.bukkit.Material.valueOf(
+                    plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+
+            org.bukkit.block.Block clickedBlock = blockLocation.getBlock();
+
+            // Проверяем, является ли кликнутый блок блоком привата
+            if (clickedBlock.getType() == protectMaterial) {
+                if (plugin.getConfig().getBoolean("debug.enabled", true)) {
+                    plugin.getLogger().info("DEBUG INTERACT: Найден блок привата в позиции " +
+                            blockLocation.getBlockX() + "," + blockLocation.getBlockY() + "," + blockLocation.getBlockZ());
+
+                    boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
+                            plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+                    plugin.getLogger().info("DEBUG INTERACT: Регион расширен по высоте: " + hasHeightExpansion);
+                }
+
+                return true; // Это блок привата в центральной позиции
+            }
+
+        } catch (Exception e) {
+            plugin.getLogger().warning("Ошибка при проверке материала блока: " + e.getMessage());
+        }
+
+        // ФОЛБЭК: Если не нашли блок привата, проверяем стандартную логику
+        // Это нужно для обратной совместимости с обычными регионами
+        int centerY = (regionMinY + regionMaxY) / 2;
 
         // Добавляем отладочную информацию
         if (plugin.getConfig().getBoolean("debug.enabled", true)) {
-            plugin.getLogger().info("DEBUG INTERACT: Проверка центра для региона " + region.getId());
+            plugin.getLogger().info("DEBUG INTERACT: Проверка центра для региона " + regionId);
             plugin.getLogger().info("DEBUG INTERACT: Клик по блоку: " + blockLocation.getBlockX() + "," + blockLocation.getBlockY() + "," + blockLocation.getBlockZ());
             plugin.getLogger().info("DEBUG INTERACT: Границы региона: min(" + regionMinX + "," + regionMinY + "," + regionMinZ + ") max(" + regionMaxX + "," + regionMaxY + "," + regionMaxZ + ")");
             plugin.getLogger().info("DEBUG INTERACT: Вычисленный центр: " + centerX + "," + centerY + "," + centerZ);
@@ -115,6 +154,10 @@ public class BlockInteractListener implements Listener {
             int currentSizeY = regionMaxY - regionMinY + 1;
             int currentSizeZ = regionMaxZ - regionMinZ + 1;
             plugin.getLogger().info("DEBUG INTERACT: Размер региона: " + currentSizeX + "x" + currentSizeY + "x" + currentSizeZ);
+
+            boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
+                    plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+            plugin.getLogger().info("DEBUG INTERACT: Регион расширен по высоте: " + hasHeightExpansion);
         }
 
         boolean isCenter = blockLocation.getBlockX() == centerX &&
@@ -122,7 +165,7 @@ public class BlockInteractListener implements Listener {
                 blockLocation.getBlockZ() == centerZ;
 
         if (plugin.getConfig().getBoolean("debug.enabled", true)) {
-            plugin.getLogger().info("DEBUG INTERACT: Это центральный блок? " + isCenter);
+            plugin.getLogger().info("DEBUG INTERACT: Это центральный блок (фолбэк)? " + isCenter);
         }
 
         return isCenter;

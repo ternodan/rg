@@ -32,13 +32,125 @@ public class VisualizationManager {
         this.activeTasks = new HashMap<>();
         this.regionBorderBlocks = new HashMap<>();
 
-        plugin.getLogger().info("DEBUG INIT: VisualizationManager инициализирован (ВОССТАНОВЛЕННАЯ рабочая версия с исправлением висящих границ)");
+        plugin.getLogger().info("DEBUG INIT: VisualizationManager инициализирован");
+    }
+    /**
+     * Получает копию сохраненных границ региона
+     * @param regionId ID региона
+     * @return Копия карты с сохраненными границами или null если границ нет
+     */
+    public Map<Location, Material> getRegionBordersCopy(String regionId) {
+        Map<Location, Material> originalBlocks = regionBorderBlocks.get(regionId);
+        if (originalBlocks == null) {
+            return null;
+        }
+
+        // Возвращаем копию для безопасности
+        return new HashMap<>(originalBlocks);
     }
 
     /**
-     * ВОССТАНОВЛЕННЫЙ метод создания границ со ВСЕЙ оригинальной логикой + минимальное исправление висящих границ
+     * Восстанавливает границы региона из сохраненной копии
+     * @param regionId ID региона
+     * @param savedBorders Сохраненная копия границ
+     * @return true если границы восстановлены, false в случае ошибки
+     */
+    public boolean restoreRegionBordersFromCopy(String regionId, Map<Location, Material> savedBorders) {
+        if (savedBorders == null || savedBorders.isEmpty()) {
+            plugin.getLogger().warning("Нет сохраненных границ для восстановления региона " + regionId);
+            return false;
+        }
+
+        try {
+            // Получаем материал границ
+            Material borderMaterial;
+            try {
+                borderMaterial = Material.valueOf(plugin.getConfig().getString("visualization.physical-borders.material", "RED_WOOL"));
+            } catch (IllegalArgumentException e) {
+                borderMaterial = Material.RED_WOOL;
+            }
+
+            // Восстанавливаем границы
+            int restoredCount = 0;
+            for (Map.Entry<Location, Material> entry : savedBorders.entrySet()) {
+                Location loc = entry.getKey();
+                Block block = loc.getBlock();
+
+                // Устанавливаем блок границы
+                block.setType(borderMaterial);
+                restoredCount++;
+            }
+
+            // Сохраняем в карту границ
+            regionBorderBlocks.put(regionId, new HashMap<>(savedBorders));
+
+            plugin.getLogger().info("Восстановлены границы региона " + regionId + ": " + restoredCount + " блоков");
+            return true;
+
+        } catch (Exception e) {
+            plugin.getLogger().severe("Ошибка при восстановлении границ региона " + regionId + ": " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Безопасное удаление границ с возможностью отката
+     * @param regionId ID региона
+     * @return Копия удаленных границ для возможного восстановления
+     */
+    public Map<Location, Material> removeRegionBordersSafely(String regionId) {
+        // Сначала получаем копию
+        Map<Location, Material> backup = getRegionBordersCopy(regionId);
+
+        // Затем удаляем
+        removeRegionBorders(regionId);
+
+        // Возвращаем копию для возможного восстановления
+        return backup;
+    }
+    /**
+     * ВОССТАНОВЛЕННЫЙ метод создания границ со ВСЕЙ оригинальной логикой
+     */
+    /**
+     * ВОССТАНОВЛЕННЫЙ метод создания границ со ВСЕЙ оригинальной логикой
+     * КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильно обрабатывает регионы с расширением по высоте
      */
     public void createRegionBorders(ProtectedRegion region, World world) {
+        if (region == null) {
+            plugin.getLogger().severe("ОШИБКА: Попытка создать границы для null региона!");
+            return;
+        }
+
+        if (world == null) {
+            plugin.getLogger().severe("ОШИБКА: Попытка создать границы в null мире!");
+            return;
+        }
+
+        String regionId = region.getId();
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем расширение по высоте
+        boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
+                plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+
+        plugin.getLogger().info("DEBUG CREATE BORDERS: Регион " + regionId + " имеет расширение по высоте: " + hasHeightExpansion);
+
+        // Дополнительная проверка что регион существует в WorldGuard
+        try {
+            Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
+            if (regionManager != null) {
+                java.lang.reflect.Method getRegionMethod = regionManager.getClass().getMethod("getRegion", String.class);
+                ProtectedRegion checkRegion = (ProtectedRegion) getRegionMethod.invoke(regionManager, regionId);
+
+                if (checkRegion == null) {
+                    plugin.getLogger().severe("ОШИБКА: Регион " + regionId + " не найден в WorldGuard!");
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Не удалось проверить существование региона: " + e.getMessage());
+        }
+
         if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
             plugin.getLogger().info("=== НАЧАЛО СОЗДАНИЯ ГРАНИЦ ===");
             plugin.getLogger().info("DEBUG: Вызван createRegionBorders для региона: " + region.getId());
@@ -66,21 +178,51 @@ public class VisualizationManager {
             return;
         }
 
-        String regionId = region.getId();
-
         // Удаляем старые границы если они есть
         removeRegionBorders(regionId);
 
-        // Получаем границы региона
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Получаем правильные границы региона
         int minX = region.getMinimumPoint().x();
         int maxX = region.getMaximumPoint().x();
-        int minY = region.getMinimumPoint().y();
-        int maxY = region.getMaximumPoint().y();
+        int minY, maxY;
         int minZ = region.getMinimumPoint().z();
         int maxZ = region.getMaximumPoint().z();
 
+        if (hasHeightExpansion) {
+            // ИСПРАВЛЕНИЕ: Для регионов с расширением по высоте используем ОРИГИНАЛЬНЫЕ Y границы
+            // Берем базовые размеры из конфига
+            int baseY = plugin.getConfig().getInt("region-expansion.base-size.y", 3);
+
+            // Находим блок привата (центр региона по X/Z)
+            int centerX = (minX + maxX) / 2;
+            int centerZ = (minZ + maxZ) / 2;
+
+            // Ищем блок привата в центральной колонне
+            int privatBlockY = findPrivateBlockY(world, centerX, centerZ, regionId);
+
+            if (privatBlockY != -1) {
+                // Используем позицию блока привата как центр
+                int radiusY = (baseY - 1) / 2;
+                minY = privatBlockY - radiusY;
+                maxY = privatBlockY + radiusY;
+                plugin.getLogger().info("DEBUG CREATE BORDERS: Найден блок привата в Y=" + privatBlockY + ", используем Y границы: " + minY + " -> " + maxY);
+            } else {
+                // Фолбэк: используем поверхность земли
+                int groundY = world.getHighestBlockYAt(centerX, centerZ);
+                int radiusY = (baseY - 1) / 2;
+                minY = groundY - radiusY;
+                maxY = groundY + radiusY;
+                plugin.getLogger().info("DEBUG CREATE BORDERS: Блок привата не найден, используем поверхность земли Y=" + groundY + ", границы: " + minY + " -> " + maxY);
+            }
+        } else {
+            // Обычный регион - используем его реальные границы
+            minY = region.getMinimumPoint().y();
+            maxY = region.getMaximumPoint().y();
+            plugin.getLogger().info("DEBUG CREATE BORDERS: Обычный регион, используем реальные Y границы: " + minY + " -> " + maxY);
+        }
+
         if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
-            plugin.getLogger().info("DEBUG: Границы региона:");
+            plugin.getLogger().info("DEBUG: Границы региона (исправленные):");
             plugin.getLogger().info("DEBUG: X: " + minX + " -> " + maxX + " (размер: " + (maxX - minX + 1) + ")");
             plugin.getLogger().info("DEBUG: Y: " + minY + " -> " + maxY + " (размер: " + (maxY - minY + 1) + ")");
             plugin.getLogger().info("DEBUG: Z: " + minZ + " -> " + maxZ + " (размер: " + (maxZ - minZ + 1) + ")");
@@ -99,7 +241,7 @@ public class VisualizationManager {
             borderMaterial = Material.RED_WOOL;
         }
 
-        // ОРИГИНАЛЬНАЯ ЛОГИКА: Проверяем стратегию размещения
+        // Проверяем стратегию размещения
         String strategy = plugin.getConfig().getString("visualization.physical-borders.placement.strategy", "surface_contact");
         if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
             plugin.getLogger().info("DEBUG: Стратегия размещения: " + strategy);
@@ -109,18 +251,18 @@ public class VisualizationManager {
         Set<Location> borderLocations;
 
         if ("visibility_based".equals(strategy)) {
-            // ИСПРАВЛЕНО: Размещение с приоритетом видимости НО с проверкой земли
+            // Размещение с приоритетом видимости НО с проверкой земли
             int centerY = (minY + maxY) / 2;
             borderLocations = getBorderLocationsWithVisibilityButOnGround(world, minX, maxX, minZ, maxZ, centerY);
         } else if ("below_center".equals(strategy)) {
-            // ОРИГИНАЛЬНАЯ ЛОГИКА: Создаем границы на уровне центра региона
+            // Создаем границы на уровне центра региона
             int centerY = (minY + maxY) / 2;
             if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
                 plugin.getLogger().info("DEBUG: Центральный уровень Y для границ: " + centerY);
             }
             borderLocations = generateSimpleBorderLocations(world, minX, maxX, minZ, maxZ, centerY);
         } else {
-            // ОРИГИНАЛЬНАЯ ЛОГИКА: используем поиск земли
+            // используем поиск земли
             if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
                 plugin.getLogger().info("DEBUG: Используется умная стратегия размещения");
             }
@@ -136,7 +278,7 @@ public class VisualizationManager {
             return;
         }
 
-        // ОРИГИНАЛЬНАЯ ЛОГИКА: Размещаем границы с обработкой растительности
+        // Размещаем границы с обработкой растительности
         Map<Location, Material> originalBlocks = new HashMap<>();
         int successCount = 0;
         int errorCount = 0;
@@ -145,7 +287,7 @@ public class VisualizationManager {
         int otherVegetationCount = 0;
         int placedAboveCenterCount = 0;
         int placedBelowCenterCount = 0;
-        int placedOnGroundCount = 0; // ДОБАВЛЕНО: счетчик блоков на земле
+        int placedOnGroundCount = 0;
         boolean replaceVegetation = plugin.getConfig().getBoolean("visualization.physical-borders.placement.replace_vegetation", true);
 
         // Центр для подсчета статистики
@@ -160,7 +302,7 @@ public class VisualizationManager {
                 Block block = loc.getBlock();
                 Material originalMaterial = block.getType();
 
-                // ДОБАВЛЕНО: Проверяем, что блок на земле
+                // Проверяем, что блок на земле
                 Block blockBelow = world.getBlockAt(loc.getBlockX(), loc.getBlockY() - 1, loc.getBlockZ());
                 boolean isOnGround = isSolidBlock(blockBelow);
                 if (isOnGround) {
@@ -174,7 +316,7 @@ public class VisualizationManager {
                     }
                 }
 
-                // ОРИГИНАЛЬНАЯ ЛОГИКА: Проверяем, что заменяем
+                // Проверяем, что заменяем
                 boolean replacingGrass = isGrass(block);
                 boolean replacingFlower = isFlower(block);
                 boolean replacingOtherVegetation = !replacingGrass && !replacingFlower && isVegetation(block);
@@ -196,7 +338,7 @@ public class VisualizationManager {
                     }
                 }
 
-                // ОРИГИНАЛЬНАЯ ЛОГИКА: Подсчитываем размещение относительно центра
+                // Подсчитываем размещение относительно центра
                 if (loc.getBlockY() > centerY) {
                     placedAboveCenterCount++;
                 } else if (loc.getBlockY() < centerY) {
@@ -237,7 +379,7 @@ public class VisualizationManager {
                     }
                 }
 
-                // ОРИГИНАЛЬНАЯ ЛОГИКА: Дополнительные сообщения о замене
+                // Дополнительные сообщения о замене
                 if (plugin.getConfig().getBoolean("debug.log-border-creation", false)) {
                     String replacementType = replacingGrass ? " (заменена трава)" :
                             replacingFlower ? " (заменен цветок)" :
@@ -252,7 +394,7 @@ public class VisualizationManager {
             }
         }
 
-        // ОРИГИНАЛЬНАЯ ЛОГИКА: Логируем информацию о замене растительности
+        // Логируем информацию о замене растительности
         if (grassReplacedCount > 0 || flowersReplacedCount > 0 || otherVegetationCount > 0) {
             plugin.getLogger().info("DEBUG VEGETATION: При создании границ региона " + regionId + " заменено: " +
                     "травы - " + grassReplacedCount + ", цветов - " + flowersReplacedCount + ", других растений - " + otherVegetationCount);
@@ -265,7 +407,7 @@ public class VisualizationManager {
             plugin.getLogger().info("=== РЕЗУЛЬТАТ СОЗДАНИЯ ГРАНИЦ ===");
             plugin.getLogger().info("DEBUG: Регион: " + regionId);
             plugin.getLogger().info("DEBUG: Успешно установлено: " + successCount + " блоков");
-            plugin.getLogger().info("DEBUG: НА ЗЕМЛЕ размещено: " + placedOnGroundCount + " блоков"); // ДОБАВЛЕНО
+            plugin.getLogger().info("DEBUG: НА ЗЕМЛЕ размещено: " + placedOnGroundCount + " блоков");
             if (placedBelowCenterCount > 0 || placedAboveCenterCount > 0) {
                 plugin.getLogger().info("DEBUG: Размещено ниже центра: " + placedBelowCenterCount + " блоков");
                 plugin.getLogger().info("DEBUG: Размещено ВЫШЕ центра: " + placedAboveCenterCount + " блоков");
@@ -283,9 +425,52 @@ public class VisualizationManager {
 
         plugin.getLogger().info("DEBUG BORDERS: Создано " + borderLocations.size() + " блоков границ для региона " + regionId);
     }
+    private int findPrivateBlockY(World world, int centerX, int centerZ, String regionId) {
+        try {
+            // Получаем материал блока привата из конфига
+            org.bukkit.Material protectMaterial;
+            try {
+                protectMaterial = org.bukkit.Material.valueOf(
+                        plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+            } catch (IllegalArgumentException e) {
+                protectMaterial = org.bukkit.Material.DIAMOND_BLOCK;
+            }
 
+            plugin.getLogger().info("DEBUG FIND PRIVATE: Ищем блок привата (" + protectMaterial + ") в центральной колонне X=" + centerX + " Z=" + centerZ);
+
+            // Ищем блок привата от поверхности земли вниз до бедрока
+            int highestY = world.getHighestBlockYAt(centerX, centerZ);
+
+            // Начинаем поиск с поверхности и идем вниз
+            for (int y = highestY; y >= world.getMinHeight(); y--) {
+                org.bukkit.block.Block block = world.getBlockAt(centerX, y, centerZ);
+
+                if (block.getType() == protectMaterial) {
+                    plugin.getLogger().info("DEBUG FIND PRIVATE: ✅ Найден блок привата в Y=" + y);
+                    return y;
+                }
+            }
+
+            // Если не нашли вниз, ищем вверх от поверхности
+            for (int y = highestY + 1; y <= world.getMaxHeight() - 1; y++) {
+                org.bukkit.block.Block block = world.getBlockAt(centerX, y, centerZ);
+
+                if (block.getType() == protectMaterial) {
+                    plugin.getLogger().info("DEBUG FIND PRIVATE: ✅ Найден блок привата в Y=" + y + " (выше поверхности)");
+                    return y;
+                }
+            }
+
+            plugin.getLogger().warning("DEBUG FIND PRIVATE: ❌ Блок привата не найден в центральной колонне региона " + regionId);
+            return -1;
+
+        } catch (Exception e) {
+            plugin.getLogger().severe("DEBUG FIND PRIVATE: Ошибка при поиске блока привата: " + e.getMessage());
+            return -1;
+        }
+    }
     /**
-     * ИСПРАВЛЕННАЯ ЛОГИКА: Генерация позиций границ с приоритетом видимости НО с проверкой земли
+     * Генерация позиций границ с приоритетом видимости НО с проверкой земли
      */
     private Set<Location> getBorderLocationsWithVisibilityButOnGround(World world, int minX, int maxX, int minZ, int maxZ, int centerY) {
         Set<Location> locations = new HashSet<>();
@@ -334,7 +519,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ИСПРАВЛЕННАЯ ЛОГИКА: Поиск видимой позиции для границы с проверкой земли
+     * Поиск видимой позиции для границы с проверкой земли
      */
     private Location findVisibleBorderLocationWithGroundCheck(World world, int x, int centerY, int z) {
         // ПРИОРИТЕТ 1: Пробуем на 1 блок ниже центра
@@ -345,7 +530,7 @@ public class VisualizationManager {
             plugin.getLogger().info("DEBUG VISIBILITY: Проверяем приоритетную позицию X=" + x + " Y=" + preferredY + " Z=" + z);
         }
 
-        // ИСПРАВЛЕНИЕ: Проверяем что под блоком есть земля
+        // Проверяем что под блоком есть земля
         Block blockBelow = world.getBlockAt(x, preferredY - 1, z);
         if (isBorderVisible(world, x, preferredY, z) && isSolidBlock(blockBelow)) {
             if (plugin.getConfig().getBoolean("debug.verbose-border-search", false)) {
@@ -354,7 +539,7 @@ public class VisualizationManager {
             return preferredLoc;
         }
 
-        // ПРИОРИТЕТ 2: Ищем ближайшую позицию НА ЗЕМЛЕ (пусть даже менее видимую)
+        // ПРИОРИТЕТ 2: Ищем ближайшую позицию НА ЗЕМЛЕ
         int maxSearchHeight = plugin.getConfig().getInt("visualization.physical-borders.placement.max_height_search", 20);
 
         // Сначала ищем вниз - ближе к земле
@@ -389,7 +574,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Проверка видимости блока границы
+     * Проверка видимости блока границы
      */
     private boolean isBorderVisible(World world, int x, int y, int z) {
         Block borderBlock = world.getBlockAt(x, y, z);
@@ -409,7 +594,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Проверка прозрачности блока
+     * Проверка прозрачности блока
      */
     private boolean isTransparentOrAir(Block block) {
         Material type = block.getType();
@@ -431,15 +616,36 @@ public class VisualizationManager {
                 type.toString().contains("LEAVES") ||
                 type == Material.SNOW ||
                 type == Material.TORCH ||
-                type == Material.REDSTONE_TORCH) {
+                type == Material.REDSTONE_TORCH ||
+                type == Material.LEVER ||
+                type == Material.STONE_BUTTON ||
+                type == Material.OAK_BUTTON ||
+                type == Material.TRIPWIRE_HOOK ||
+                type == Material.STRING) {
+            return true;
+        }
+
+        // Дополнительные прозрачные блоки
+        String typeName = type.toString();
+        if (typeName.contains("SIGN") ||
+                typeName.contains("BANNER") ||
+                typeName.contains("CARPET") ||
+                typeName.contains("PRESSURE_PLATE") ||
+                typeName.contains("RAIL") ||
+                typeName.equals("LADDER") ||
+                typeName.equals("VINE") ||
+                typeName.equals("COBWEB") ||
+                typeName.equals("BARRIER")) {
             return true;
         }
 
         return false;
     }
-
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: ПРОСТОЙ метод генерации позиций границ - прямоугольник на одном уровне
+     * УМНОЕ размещение границ - поиск оптимальной позиции для каждой границы
+     */
+    /**
+     * ПРОСТОЙ метод генерации позиций границ - прямоугольник на одном уровне
      */
     private Set<Location> generateSimpleBorderLocations(World world, int minX, int maxX, int minZ, int maxZ, int y) {
         Set<Location> locations = new HashSet<>();
@@ -492,7 +698,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: УМНЫЙ метод генерации позиций границ с поиском земли
+     * УМНЫЙ метод генерации позиций границ с поиском земли
      */
     private Set<Location> getBorderLocationsWithSmartPlacement(World world, int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
         Set<Location> locations = new HashSet<>();
@@ -543,10 +749,6 @@ public class VisualizationManager {
 
         return locations;
     }
-
-    /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: УМНОЕ размещение границ - поиск оптимальной позиции для каждой границы
-     */
     private Location findOptimalBorderLocation(World world, int x, int centerY, int z) {
         // Получаем настройки из конфига
         String strategy = plugin.getConfig().getString("visualization.physical-borders.placement.strategy", "surface_contact");
@@ -573,7 +775,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: УМНЫЙ метод для размещения границ с гарантией контакта с землей
+     * УМНЫЙ метод для размещения границ с гарантией контакта с землей
      */
     private Location findGroundBasedBorderLocation(World world, int x, int centerY, int z, int maxDepthSearch, int maxHeightSearch, boolean replaceVegetation) {
         if (plugin.getConfig().getBoolean("debug.verbose-border-search", false)) {
@@ -674,9 +876,8 @@ public class VisualizationManager {
         }
         return new Location(world, x, emergencyY, z);
     }
-
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Метод для определения цветов и декоративных растений
+     * Метод для определения цветов и декоративных растений
      */
     private boolean isFlower(Block block) {
         Material type = block.getType();
@@ -710,14 +911,14 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Универсальный метод для определения всей заменяемой растительности
+     * Универсальный метод для определения всей заменяемой растительности
      */
     private boolean isReplaceableVegetation(Block block) {
         return isGrass(block) || isFlower(block) || isVegetation(block);
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Метод для определения травы
+     * Метод для определения травы
      */
     private boolean isGrass(Block block) {
         Material type = block.getType();
@@ -750,7 +951,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Метод для определения растительности
+     * Метод для определения растительности
      */
     private boolean isVegetation(Block block) {
         Material type = block.getType();
@@ -777,7 +978,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ ЛОГИКА: Проверяет, является ли блок воздухом или заменяемым
+     * Проверяет, является ли блок воздухом или заменяемым
      */
     private boolean isAirOrReplaceable(Block block) {
         Material type = block.getType();
@@ -796,7 +997,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ОРИГИНАЛЬНАЯ И УЛУЧШЕННАЯ ЛОГИКА: метод проверки твердого блока
+     * Улучшенный метод проверки твердого блока
      */
     private boolean isSolidBlock(Block block) {
         Material type = block.getType();
@@ -833,7 +1034,6 @@ public class VisualizationManager {
         // Все остальное считаем твердым (включая землю, камень, бедрок и т.д.)
         return true;
     }
-
     /**
      * Перегруженный метод для совместимости
      */
@@ -855,7 +1055,7 @@ public class VisualizationManager {
     }
 
     /**
-     * ИСПРАВЛЕННЫЙ метод для поиска мира региона
+     * Метод для поиска мира региона
      */
     private World findWorldForRegion(ProtectedRegion region) {
         if (plugin.getConfig().getBoolean("debug.log-world-detection", false)) {
@@ -950,7 +1150,6 @@ public class VisualizationManager {
             }
         }
     }
-
     /**
      * Показывает предварительную визуализацию (можно оставить для предпросмотра)
      */

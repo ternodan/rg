@@ -67,7 +67,9 @@ public class HeightExpansionManager {
 
         if (!expansionFile.exists()) {
             try {
-                expansionFile.createNewFile();
+                if (expansionFile.createNewFile()) {
+                    plugin.getLogger().info("Создан файл height-expansions.yml");
+                }
             } catch (IOException e) {
                 plugin.getLogger().warning("Не удалось создать файл height-expansions.yml: " + e.getMessage());
             }
@@ -77,17 +79,20 @@ public class HeightExpansionManager {
 
         // Загружаем все сохраненные расширения
         if (expansionConfig.contains("expansions")) {
-            for (String regionId : expansionConfig.getConfigurationSection("expansions").getKeys(false)) {
-                long expirationTime = expansionConfig.getLong("expansions." + regionId + ".expiration");
-                int originalMinY = expansionConfig.getInt("expansions." + regionId + ".original-min-y");
-                int originalMaxY = expansionConfig.getInt("expansions." + regionId + ".original-max-y");
+            org.bukkit.configuration.ConfigurationSection section = expansionConfig.getConfigurationSection("expansions");
+            if (section != null) {
+                for (String regionId : section.getKeys(false)) {
+                    long expirationTime = expansionConfig.getLong("expansions." + regionId + ".expiration");
+                    int originalMinY = expansionConfig.getInt("expansions." + regionId + ".original-min-y");
+                    int originalMaxY = expansionConfig.getInt("expansions." + regionId + ".original-max-y");
 
-                regionExpansionTimes.put(regionId, expirationTime);
-                originalBounds.put(regionId, new RegionBounds(originalMinY, originalMaxY));
-                sentNotifications.put(regionId, new HashSet<>());
+                    regionExpansionTimes.put(regionId, expirationTime);
+                    originalBounds.put(regionId, new RegionBounds(originalMinY, originalMaxY));
+                    sentNotifications.put(regionId, new HashSet<>());
 
-                plugin.getLogger().info("Загружено временное расширение для региона " + regionId +
-                        ", истекает: " + new Date(expirationTime));
+                    plugin.getLogger().info("Загружено временное расширение для региона " + regionId +
+                            ", истекает: " + new Date(expirationTime));
+                }
             }
         }
     }
@@ -97,7 +102,7 @@ public class HeightExpansionManager {
      */
     private void saveExpansions() {
         for (Map.Entry<String, Long> entry : regionExpansionTimes.entrySet()) {
-            String regionId = entry.getKey();
+            final String regionId = entry.getKey();
             RegionBounds bounds = originalBounds.get(regionId);
 
             if (bounds != null) {
@@ -115,111 +120,208 @@ public class HeightExpansionManager {
     }
 
     /**
-     * Активирует временное расширение по высоте для региона
+     * НОВЫЙ метод для активации расширения с точным временем в секундах
      */
-    public boolean activateHeightExpansion(String regionId, int hours) {
+    public boolean activateHeightExpansionSeconds(String regionId, int seconds) {
+        plugin.getLogger().info("=== АКТИВАЦИЯ РАСШИРЕНИЯ ПО ВЫСОТЕ (СЕКУНДЫ) ===");
+        plugin.getLogger().info("Регион: " + regionId + ", секунды: " + seconds);
+
         if (!plugin.getConfig().getBoolean("height-expansion.enabled", true)) {
+            plugin.getLogger().warning("Расширение по высоте отключено в конфиге");
             return false;
         }
 
         ProtectedRegion region = findRegionById(regionId);
         if (region == null) {
+            plugin.getLogger().warning("ОШИБКА: Регион " + regionId + " не найден для расширения по высоте");
             return false;
         }
+
+        plugin.getLogger().info("Регион найден: " + region.getMinimumPoint() + " -> " + region.getMaximumPoint());
 
         org.bukkit.World world = findWorldForRegion(regionId);
         if (world == null) {
+            plugin.getLogger().warning("ОШИБКА: Не найден мир для региона " + regionId);
             return false;
         }
 
-        // Сохраняем оригинальные границы если еще не сохранены
+        plugin.getLogger().info("Мир найден: " + world.getName());
+
+        // Сохраняем оригинальные границы ДО изменения региона
         if (!originalBounds.containsKey(regionId)) {
-            originalBounds.put(regionId, new RegionBounds(
+            RegionBounds bounds = new RegionBounds(
                     region.getMinimumPoint().y(),
                     region.getMaximumPoint().y()
-            ));
+            );
+            originalBounds.put(regionId, bounds);
+            plugin.getLogger().info("Сохранены оригинальные границы: Y=" + bounds.minY + " -> " + bounds.maxY);
+        } else {
+            plugin.getLogger().info("Оригинальные границы уже сохранены");
         }
 
-        // Расширяем регион до максимальной высоты
-        if (!expandRegionToMaxHeight(region, world)) {
+        plugin.getLogger().info("Начинаем БЕЗОПАСНОЕ расширение региона ТОЛЬКО по высоте БЕЗ удаления границ...");
+
+        // Используем безопасное расширение
+        boolean expansionSuccess = safeExpandRegionHeightOnly(region, world);
+
+        if (!expansionSuccess) {
+            plugin.getLogger().severe("ОШИБКА: Не удалось расширить регион по высоте");
             return false;
         }
 
-        // Устанавливаем время истечения
+        plugin.getLogger().info("Регион успешно расширен по высоте");
+
+        // Получаем ОБНОВЛЕННЫЙ регион после изменения
+        ProtectedRegion updatedRegion = findRegionById(regionId);
+        if (updatedRegion == null) {
+            plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Регион исчез после расширения!");
+            return false;
+        }
+
+        plugin.getLogger().info("Обновленный регион: " + updatedRegion.getMinimumPoint() + " -> " + updatedRegion.getMaximumPoint());
+
+        // Устанавливаем время истечения в миллисекундах (конвертируем секунды)
+        long durationMillis = seconds * 1000L;
         long expirationTime;
+
         if (regionExpansionTimes.containsKey(regionId)) {
-            // Продлеваем существующее расширение
-            expirationTime = regionExpansionTimes.get(regionId) + (hours * 60 * 60 * 1000L);
+            expirationTime = regionExpansionTimes.get(regionId) + durationMillis;
+            plugin.getLogger().info("Продлеваем существующее расширение на " + seconds + " секунд");
         } else {
-            // Новое расширение
-            expirationTime = System.currentTimeMillis() + (hours * 60 * 60 * 1000L);
+            expirationTime = System.currentTimeMillis() + durationMillis;
+            plugin.getLogger().info("Создаем новое расширение на " + seconds + " секунд");
         }
 
         regionExpansionTimes.put(regionId, expirationTime);
         sentNotifications.put(regionId, new HashSet<>());
 
         saveExpansions();
+        plugin.getLogger().info("Данные расширения сохранены");
+
+        plugin.getLogger().info("Границы оставлены на месте - расширение по высоте НЕ влияет на видимые границы");
 
         plugin.getLogger().info("Активировано временное расширение по высоте для региона " + regionId +
-                " на " + hours + " часов");
+                " на " + formatSecondsToTime(seconds));
 
+        plugin.getLogger().info("=== КОНЕЦ АКТИВАЦИИ РАСШИРЕНИЯ ===");
         return true;
     }
 
     /**
-     * Отключает временное расширение по высоте для региона
+     * ПОЛНОСТЬЮ ПЕРЕПИСАННЫЙ метод активации временного расширения по высоте
+     * КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: НЕ УДАЛЯЕТ границы, а сохраняет их местоположение
      */
-    public boolean disableHeightExpansion(String regionId) {
-        if (!hasHeightExpansion(regionId)) {
+    public boolean activateHeightExpansion(String regionId, int hours) {
+        plugin.getLogger().info("=== АКТИВАЦИЯ РАСШИРЕНИЯ ПО ВЫСОТЕ ===");
+        plugin.getLogger().info("Регион: " + regionId + ", часы: " + hours);
+
+        if (!plugin.getConfig().getBoolean("height-expansion.enabled", true)) {
+            plugin.getLogger().warning("Расширение по высоте отключено в конфиге");
             return false;
         }
 
         ProtectedRegion region = findRegionById(regionId);
         if (region == null) {
+            plugin.getLogger().warning("ОШИБКА: Регион " + regionId + " не найден для расширения по высоте");
             return false;
         }
 
-        RegionBounds bounds = originalBounds.get(regionId);
-        if (bounds == null) {
+        plugin.getLogger().info("Регион найден: " + region.getMinimumPoint() + " -> " + region.getMaximumPoint());
+
+        org.bukkit.World world = findWorldForRegion(regionId);
+        if (world == null) {
+            plugin.getLogger().warning("ОШИБКА: Не найден мир для региона " + regionId);
             return false;
         }
 
-        // Восстанавливаем оригинальные границы
-        if (!restoreRegionHeight(region, bounds)) {
+        plugin.getLogger().info("Мир найден: " + world.getName());
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Сохраняем оригинальные границы ДО изменения региона
+        if (!originalBounds.containsKey(regionId)) {
+            RegionBounds bounds = new RegionBounds(
+                    region.getMinimumPoint().y(),
+                    region.getMaximumPoint().y()
+            );
+            originalBounds.put(regionId, bounds);
+            plugin.getLogger().info("Сохранены оригинальные границы: Y=" + bounds.minY + " -> " + bounds.maxY);
+        } else {
+            plugin.getLogger().info("Оригинальные границы уже сохранены");
+        }
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: НЕ ТРОГАЕМ границы вообще!
+        // Просто расширяем регион, границы останутся на своих местах
+        plugin.getLogger().info("Начинаем БЕЗОПАСНОЕ расширение региона ТОЛЬКО по высоте БЕЗ удаления границ...");
+
+        // Используем новый метод безопасного расширения
+        boolean expansionSuccess = safeExpandRegionHeightOnly(region, world);
+
+        if (!expansionSuccess) {
+            plugin.getLogger().severe("ОШИБКА: Не удалось расширить регион по высоте");
             return false;
         }
 
-        // Удаляем из хранилищ
-        regionExpansionTimes.remove(regionId);
-        originalBounds.remove(regionId);
-        sentNotifications.remove(regionId);
+        plugin.getLogger().info("Регион успешно расширен по высоте");
 
-        // Удаляем из конфига
-        expansionConfig.set("expansions." + regionId, null);
+        // Получаем ОБНОВЛЕННЫЙ регион после изменения
+        ProtectedRegion updatedRegion = findRegionById(regionId);
+        if (updatedRegion == null) {
+            plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Регион исчез после расширения!");
+            return false;
+        }
+
+        plugin.getLogger().info("Обновленный регион: " + updatedRegion.getMinimumPoint() + " -> " + updatedRegion.getMaximumPoint());
+
+        // Устанавливаем время истечения
+        long expirationTime;
+        if (regionExpansionTimes.containsKey(regionId)) {
+            expirationTime = regionExpansionTimes.get(regionId) + (hours * 60 * 60 * 1000L);
+            plugin.getLogger().info("Продлеваем существующее расширение");
+        } else {
+            expirationTime = System.currentTimeMillis() + (hours * 60 * 60 * 1000L);
+            plugin.getLogger().info("Создаем новое расширение");
+        }
+
+        regionExpansionTimes.put(regionId, expirationTime);
+        sentNotifications.put(regionId, new HashSet<>());
+
         saveExpansions();
+        plugin.getLogger().info("Данные расширения сохранены");
 
-        plugin.getLogger().info("Отключено временное расширение по высоте для региона " + regionId);
+        // ИСПРАВЛЕНИЕ: Границы НЕ ТРОГАЕМ, они должны остаться на месте!
+        plugin.getLogger().info("Границы оставлены на месте - расширение по высоте НЕ влияет на видимые границы");
 
+        plugin.getLogger().info("Активировано временное расширение по высоте для региона " + regionId +
+                " на " + hours + " часов");
+
+        plugin.getLogger().info("=== КОНЕЦ АКТИВАЦИИ РАСШИРЕНИЯ ===");
         return true;
     }
-
     /**
-     * Расширяет регион до максимальной высоты мира
+     * НОВЫЙ БЕЗОПАСНЫЙ метод расширения ТОЛЬКО по высоте
+     * НЕ ТРОГАЕТ границы X/Z - только Y расширяет до максимума
+     * ЭТО КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ - СОХРАНЯЕТ РАЗМЕРЫ РЕГИОНА ПО ПЛОЩАДИ
      */
-    private boolean expandRegionToMaxHeight(ProtectedRegion region, org.bukkit.World world) {
+    private boolean safeExpandRegionHeightOnly(ProtectedRegion region, org.bukkit.World world) {
         try {
             if (!(region instanceof ProtectedCuboidRegion)) {
+                plugin.getLogger().warning("Регион не является кубоидным, расширение невозможно");
                 return false;
             }
 
+            // СОХРАНЯЕМ ОРИГИНАЛЬНЫЕ X/Z границы - НЕ ТРОГАЕМ ИХ!
             int minX = region.getMinimumPoint().x();
             int maxX = region.getMaximumPoint().x();
             int minZ = region.getMinimumPoint().z();
             int maxZ = region.getMaximumPoint().z();
 
-            // Расширяем до максимальной высоты мира
+            // РАСШИРЯЕМ ТОЛЬКО Y до максимальной высоты мира
             int minY = world.getMinHeight();
             int maxY = world.getMaxHeight() - 1;
+
+            plugin.getLogger().info("БЕЗОПАСНОЕ расширение: оставляем X/Z границы как есть");
+            plugin.getLogger().info("X: " + minX + " -> " + maxX + " (НЕ МЕНЯЕМ)");
+            plugin.getLogger().info("Z: " + minZ + " -> " + maxZ + " (НЕ МЕНЯЕМ)");
+            plugin.getLogger().info("Y: расширяем до " + minY + " -> " + maxY);
 
             BlockVector3 newMin = BlockVector3.at(minX, minY, minZ);
             BlockVector3 newMax = BlockVector3.at(maxX, maxY, maxZ);
@@ -227,10 +329,11 @@ public class HeightExpansionManager {
             // Получаем RegionManager для обновления региона
             Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
             if (regionManager == null) {
+                plugin.getLogger().severe("RegionManager не найден для мира " + world.getName());
                 return false;
             }
 
-            // Создаем новый регион с расширенными границами
+            // Создаем новый регион с расширенными ТОЛЬКО по Y границами
             ProtectedCuboidRegion newRegion = new ProtectedCuboidRegion(region.getId(), newMin, newMax);
 
             // Копируем все параметры
@@ -240,89 +343,230 @@ public class HeightExpansionManager {
             newRegion.setPriority(region.getPriority());
 
             try {
-                // Удаляем старый регион и добавляем новый
-                java.lang.reflect.Method removeRegionMethod = regionManager.getClass().getMethod("removeRegion", String.class);
-                removeRegionMethod.invoke(regionManager, region.getId());
-
-                java.lang.reflect.Method addRegionMethod = regionManager.getClass().getMethod("addRegion", ProtectedRegion.class);
-                addRegionMethod.invoke(regionManager, newRegion);
-
+                // АТОМАРНАЯ замена региона
+                java.lang.reflect.Method removeRegionMethod = regionManager.getClass()
+                        .getMethod("removeRegion", String.class);
+                java.lang.reflect.Method addRegionMethod = regionManager.getClass()
+                        .getMethod("addRegion", ProtectedRegion.class);
                 java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
-                saveMethod.invoke(regionManager);
 
-                plugin.getLogger().info("Регион " + region.getId() + " расширен по высоте: " + minY + " -> " + maxY);
+                // Удаляем старый регион
+                removeRegionMethod.invoke(regionManager, region.getId());
+                plugin.getLogger().info("Старый регион удален для замены");
+
+                // Добавляем новый регион с расширенной высотой
+                addRegionMethod.invoke(regionManager, newRegion);
+                plugin.getLogger().info("Новый регион с расширенной высотой добавлен");
+
+                // Сохраняем изменения
+                saveMethod.invoke(regionManager);
+                plugin.getLogger().info("Изменения сохранены");
+
+                plugin.getLogger().info("Регион " + region.getId() + " БЕЗОПАСНО расширен по высоте: " + minY + " -> " + maxY);
+                plugin.getLogger().info("X/Z границы сохранены: X=" + minX + "->" + maxX + ", Z=" + minZ + "->" + maxZ);
                 return true;
 
             } catch (Exception e) {
-                plugin.getLogger().severe("Ошибка при расширении региона по высоте: " + e.getMessage());
+                plugin.getLogger().severe("Ошибка при замене региона: " + e.getMessage());
+                e.printStackTrace();
+
+                // Пытаемся восстановить оригинальный регион
+                try {
+                    java.lang.reflect.Method addRegionMethod = regionManager.getClass()
+                            .getMethod("addRegion", ProtectedRegion.class);
+                    addRegionMethod.invoke(regionManager, region);
+
+                    java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
+                    saveMethod.invoke(regionManager);
+
+                    plugin.getLogger().info("Оригинальный регион восстановлен после ошибки");
+                } catch (Exception restoreEx) {
+                    plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Не удалось восстановить оригинальный регион: " + restoreEx.getMessage());
+                }
+
                 return false;
             }
 
         } catch (Exception e) {
-            plugin.getLogger().severe("Ошибка при расширении региона: " + e.getMessage());
+            plugin.getLogger().severe("Ошибка при безопасном расширении региона: " + e.getMessage());
+            e.printStackTrace();
             return false;
         }
     }
 
     /**
-     * Восстанавливает оригинальную высоту региона
+     * КРИТИЧЕСКИ ИСПРАВЛЕННЫЙ метод отключения временного расширения по высоте
+     * Теперь НЕ ТРОГАЕТ регион, если его НЕТ в WorldGuard
+     */
+    public boolean disableHeightExpansion(String regionId) {
+        if (!hasHeightExpansion(regionId)) {
+            plugin.getLogger().info("DEBUG DISABLE: Регион " + regionId + " не имеет активного расширения по высоте");
+            return false;
+        }
+
+        plugin.getLogger().info("НАЧАЛО отключения расширения по высоте для региона " + regionId);
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем существование региона ДО любых операций
+        ProtectedRegion region = findRegionById(regionId);
+        if (region == null) {
+            plugin.getLogger().warning("ОШИБКА: Регион " + regionId + " не найден в WorldGuard при отключении расширения!");
+            plugin.getLogger().info("Очищаем данные расширения для несуществующего региона");
+
+            // Очищаем данные расширения для несуществующего региона
+            regionExpansionTimes.remove(regionId);
+            originalBounds.remove(regionId);
+            sentNotifications.remove(regionId);
+            expansionConfig.set("expansions." + regionId, null);
+            saveExpansions();
+
+            return true; // Данные очищены
+        }
+
+        RegionBounds bounds = originalBounds.get(regionId);
+        if (bounds == null) {
+            plugin.getLogger().warning("ОШИБКА: Не найдены оригинальные границы для региона " + regionId);
+            plugin.getLogger().info("Очищаем данные расширения без восстановления границ");
+
+            // Очищаем данные расширения
+            regionExpansionTimes.remove(regionId);
+            originalBounds.remove(regionId);
+            sentNotifications.remove(regionId);
+            expansionConfig.set("expansions." + regionId, null);
+            saveExpansions();
+
+            return true; // Данные очищены
+        }
+
+        plugin.getLogger().info("DEBUG DISABLE: Найдены оригинальные границы: Y=" + bounds.minY + " -> " + bounds.maxY);
+        plugin.getLogger().info("DEBUG DISABLE: Текущие границы региона: " + region.getMinimumPoint() + " -> " + region.getMaximumPoint());
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Очищаем данные расширения ПОСЛЕ проверок
+        regionExpansionTimes.remove(regionId);
+        originalBounds.remove(regionId);
+        sentNotifications.remove(regionId);
+        expansionConfig.set("expansions." + regionId, null);
+        saveExpansions();
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Восстанавливаем оригинальные границы ТОЛЬКО если регион существует
+        boolean restored = restoreRegionHeight(region, bounds);
+
+        if (restored) {
+            plugin.getLogger().info("✅ Размер региона восстановлен успешно");
+            plugin.getLogger().info("Отключено временное расширение по высоте для региона " + regionId);
+        } else {
+            plugin.getLogger().warning("⚠️ Временное расширение отключено, но восстановить границы не удалось для региона " + regionId);
+        }
+
+        return true; // Возвращаем true, так как данные расширения очищены
+    }
+
+    /**
+     * КРИТИЧЕСКИ ИСПРАВЛЕННЫЙ метод восстановления оригинальной высоты региона
+     * Теперь с дополнительными проверками безопасности
      */
     private boolean restoreRegionHeight(ProtectedRegion region, RegionBounds bounds) {
         try {
             if (!(region instanceof ProtectedCuboidRegion)) {
+                plugin.getLogger().warning("Регион не является кубоидным, восстановление невозможно");
                 return false;
             }
 
-            int minX = region.getMinimumPoint().x();
-            int maxX = region.getMaximumPoint().x();
-            int minZ = region.getMinimumPoint().z();
-            int maxZ = region.getMaximumPoint().z();
+            String regionId = region.getId();
+
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем что регион все еще существует
+            ProtectedRegion currentRegion = findRegionById(regionId);
+            if (currentRegion == null) {
+                plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Регион " + regionId + " исчез во время восстановления!");
+                return false;
+            }
+
+            // СОХРАНЯЕМ ТЕКУЩИЕ X/Z границы - НЕ ТРОГАЕМ ИХ!
+            int minX = currentRegion.getMinimumPoint().x();
+            int maxX = currentRegion.getMaximumPoint().x();
+            int minZ = currentRegion.getMinimumPoint().z();
+            int maxZ = currentRegion.getMaximumPoint().z();
+
+            plugin.getLogger().info("БЕЗОПАСНОЕ восстановление: оставляем X/Z границы как есть");
+            plugin.getLogger().info("X: " + minX + " -> " + maxX + " (НЕ МЕНЯЕМ)");
+            plugin.getLogger().info("Z: " + minZ + " -> " + maxZ + " (НЕ МЕНЯЕМ)");
+            plugin.getLogger().info("Y: восстанавливаем до " + bounds.minY + " -> " + bounds.maxY);
 
             BlockVector3 newMin = BlockVector3.at(minX, bounds.minY, minZ);
             BlockVector3 newMax = BlockVector3.at(maxX, bounds.maxY, maxZ);
 
             // Получаем мир региона
-            org.bukkit.World world = findWorldForRegion(region.getId());
+            org.bukkit.World world = findWorldForRegion(regionId);
             if (world == null) {
+                plugin.getLogger().severe("Мир не найден для региона " + regionId);
                 return false;
             }
 
             Object regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
             if (regionManager == null) {
+                plugin.getLogger().severe("RegionManager не найден для мира " + world.getName());
                 return false;
             }
 
-            // Создаем новый регион с оригинальными границами
-            ProtectedCuboidRegion newRegion = new ProtectedCuboidRegion(region.getId(), newMin, newMax);
+            // Создаем новый регион с восстановленными ТОЛЬКО по Y границами
+            ProtectedCuboidRegion newRegion = new ProtectedCuboidRegion(regionId, newMin, newMax);
 
-            // Копируем все параметры
-            newRegion.setOwners(region.getOwners());
-            newRegion.setMembers(region.getMembers());
-            newRegion.setFlags(region.getFlags());
-            newRegion.setPriority(region.getPriority());
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Корректно копируем все параметры
+            newRegion.setOwners(currentRegion.getOwners());
+            newRegion.setMembers(currentRegion.getMembers());
+            newRegion.setFlags(currentRegion.getFlags());
+            newRegion.setPriority(currentRegion.getPriority());
 
             try {
-                // Удаляем старый регион и добавляем новый
+                // БЕЗОПАСНАЯ замена региона
                 java.lang.reflect.Method removeRegionMethod = regionManager.getClass().getMethod("removeRegion", String.class);
-                removeRegionMethod.invoke(regionManager, region.getId());
-
                 java.lang.reflect.Method addRegionMethod = regionManager.getClass().getMethod("addRegion", ProtectedRegion.class);
-                addRegionMethod.invoke(regionManager, newRegion);
-
                 java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
-                saveMethod.invoke(regionManager);
 
-                plugin.getLogger().info("Регион " + region.getId() + " восстановлен к оригинальной высоте: " +
+                // Удаляем расширенный регион
+                removeRegionMethod.invoke(regionManager, regionId);
+                plugin.getLogger().info("Расширенный регион удален");
+
+                // Добавляем восстановленный регион
+                addRegionMethod.invoke(regionManager, newRegion);
+                plugin.getLogger().info("Восстановленный регион добавлен");
+
+                // Сохраняем изменения
+                saveMethod.invoke(regionManager);
+                plugin.getLogger().info("Изменения сохранены");
+
+                plugin.getLogger().info("Регион " + regionId + " БЕЗОПАСНО восстановлен к оригинальной высоте: " +
                         bounds.minY + " -> " + bounds.maxY);
+                plugin.getLogger().info("X/Z границы сохранены: X=" + minX + "->" + maxX + ", Z=" + minZ + "->" + maxZ);
                 return true;
 
             } catch (Exception e) {
-                plugin.getLogger().severe("Ошибка при восстановлении высоты региона: " + e.getMessage());
+                plugin.getLogger().severe("Ошибка при восстановлении региона: " + e.getMessage());
+                if (plugin.getConfig().getBoolean("debug.log-stack-traces", false)) {
+                    e.printStackTrace();
+                }
+
+                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Пытаемся восстановить оригинальный регион
+                try {
+                    java.lang.reflect.Method addRegionMethod = regionManager.getClass()
+                            .getMethod("addRegion", ProtectedRegion.class);
+                    addRegionMethod.invoke(regionManager, currentRegion);
+
+                    java.lang.reflect.Method saveMethod = regionManager.getClass().getMethod("save");
+                    saveMethod.invoke(regionManager);
+
+                    plugin.getLogger().info("Оригинальный регион восстановлен после ошибки");
+                } catch (Exception restoreEx) {
+                    plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Не удалось восстановить оригинальный регион: " + restoreEx.getMessage());
+                }
+
                 return false;
             }
 
         } catch (Exception e) {
             plugin.getLogger().severe("Ошибка при восстановлении региона: " + e.getMessage());
+            if (plugin.getConfig().getBoolean("debug.log-stack-traces", false)) {
+                e.printStackTrace();
+            }
             return false;
         }
     }
@@ -341,25 +585,28 @@ public class HeightExpansionManager {
     }
 
     /**
-     * Проверка истекших расширений
+     * ИСПРАВЛЕННАЯ проверка истекших расширений - БЕЗ СПАМА
      */
     private void checkExpiredExpansions() {
         Set<String> expiredRegions = new HashSet<>();
+        long currentTime = System.currentTimeMillis();
 
         for (Map.Entry<String, Long> entry : regionExpansionTimes.entrySet()) {
-            if (System.currentTimeMillis() >= entry.getValue()) {
+            if (currentTime >= entry.getValue()) {
                 expiredRegions.add(entry.getKey());
             }
         }
 
-        // Отключаем истекшие расширения
+        // ИСПРАВЛЕНИЕ: Обрабатываем истекшие расширения только один раз
         for (String regionId : expiredRegions) {
-            handleExpiredExpansion(regionId);
+            if (regionExpansionTimes.containsKey(regionId)) {
+                handleExpiredExpansion(regionId);
+            }
         }
     }
 
     /**
-     * Обработка истекшего расширения
+     * ИСПРАВЛЕННАЯ обработка истекшего расширения
      */
     private void handleExpiredExpansion(String regionId) {
         plugin.getLogger().info("Время расширения по высоте региона " + regionId + " истекло!");
@@ -375,8 +622,25 @@ public class HeightExpansionManager {
             owner.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
         }
 
-        // Отключаем расширение
-        disableHeightExpansion(regionId);
+        // ИСПРАВЛЕНИЕ: Создаем final переменную для использования в lambda
+        final String finalRegionId = regionId;
+
+        // ИСПРАВЛЕНИЕ: Отключаем расширение в основном потоке
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            try {
+                boolean success = disableHeightExpansion(finalRegionId);
+                if (success) {
+                    plugin.getLogger().info("Высота региона " + finalRegionId + " восстановлена до оригинальной");
+                } else {
+                    plugin.getLogger().warning("Не удалось восстановить высоту региона " + finalRegionId);
+                }
+            } catch (Exception e) {
+                plugin.getLogger().severe("Ошибка при восстановлении высоты региона " + finalRegionId + ": " + e.getMessage());
+                if (plugin.getConfig().getBoolean("debug.log-stack-traces", false)) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     /**
@@ -411,7 +675,7 @@ public class HeightExpansionManager {
     }
 
     /**
-     * Отправка предупреждения об истечении
+     * Отправка предупреждения об истечении расширения
      */
     private void sendExpirationWarning(String regionId, String timeLeft) {
         String ownerName = getRegionOwnerName(regionId);
@@ -421,10 +685,11 @@ public class HeightExpansionManager {
             String message = plugin.getConfig().getString("messages.height-expansion-warning",
                     "&e⚠ Расширение по высоте истекает через {time}! Не забудьте продлить.");
             message = message.replace("{time}", timeLeft);
+
             owner.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
 
             // Звуковое уведомление
-            owner.playSound(owner.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 1.0f);
+            owner.playSound(owner.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 0.5f);
         }
     }
 
@@ -505,6 +770,52 @@ public class HeightExpansionManager {
         int height = maxY - minY + 1;
 
         return height + " блоков (" + minY + " -> " + maxY + ")";
+    }
+
+    /**
+     * НОВЫЙ вспомогательный метод для форматирования времени из секунд
+     */
+    private String formatSecondsToTime(int seconds) {
+        if (seconds < 60) {
+            return seconds + " секунд";
+        } else if (seconds < 3600) {
+            int minutes = seconds / 60;
+            int remainingSeconds = seconds % 60;
+            if (remainingSeconds == 0) {
+                return minutes + " минут";
+            } else {
+                return minutes + " минут " + remainingSeconds + " секунд";
+            }
+        } else if (seconds < 86400) {
+            int hours = seconds / 3600;
+            int remainingMinutes = (seconds % 3600) / 60;
+            if (remainingMinutes == 0) {
+                return hours + " час" + getHoursSuffix(hours);
+            } else {
+                return hours + " час" + getHoursSuffix(hours) + " " + remainingMinutes + " минут";
+            }
+        } else {
+            int days = seconds / 86400;
+            int remainingHours = (seconds % 86400) / 3600;
+            if (remainingHours == 0) {
+                return days + " дней";
+            } else {
+                return days + " дней " + remainingHours + " час" + getHoursSuffix(remainingHours);
+            }
+        }
+    }
+
+    /**
+     * НОВЫЙ вспомогательный метод для правильных окончаний часов
+     */
+    private String getHoursSuffix(int hours) {
+        if (hours % 10 == 1 && hours % 100 != 11) {
+            return "";
+        } else if ((hours % 10 >= 2 && hours % 10 <= 4) && (hours % 100 < 10 || hours % 100 >= 20)) {
+            return "а";
+        } else {
+            return "ов";
+        }
     }
 
     /**

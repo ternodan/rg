@@ -72,20 +72,24 @@ public class MenuListener implements Listener {
             return;
         }
 
-        // НОВОЕ: Проверяем, было ли ожидание подтверждения удаления
-        if (plugin.getRegionMenuManager().hasPendingDeletion(player)) {
-            plugin.getRegionMenuManager().clearPendingDeletion(player);
+        plugin.getLogger().info("DEBUG MENU CLOSE: Игрок " + player.getName() + " закрыл меню");
 
-            String cancelMessage = plugin.getConfig().getString("messages.region-deletion-cancelled",
-                    "&7Удаление региона отменено.");
-            player.sendMessage(ChatColor.translateAlternateColorCodes('&', cancelMessage));
+        // УМНАЯ ЛОГИКА: проверяем есть ли ожидающее удаление
+        boolean hasPendingDeletion = plugin.getRegionMenuManager().hasPendingDeletion(player);
 
-            if (plugin.getConfig().getBoolean("debug.log-menu-actions", true)) {
-                plugin.getLogger().info("DEBUG MENU: Игрок " + player.getName() + " отменил удаление региона, закрыв меню");
-            }
+        if (hasPendingDeletion) {
+            plugin.getLogger().info("DEBUG MENU CLOSE: У игрока есть ожидающее удаление - это закрытие после клика 'Удалить'");
+
+            // Информируем игрока что нужно написать команду в чат
+            player.sendMessage(ChatColor.GOLD + "💬 Напишите " + ChatColor.WHITE + "УДАЛИТЬ" +
+                    ChatColor.GOLD + " или " + ChatColor.WHITE + "ОТМЕНА" +
+                    ChatColor.GOLD + " в чат для завершения операции.");
+        } else {
+            plugin.getLogger().info("DEBUG MENU CLOSE: Обычное закрытие меню, нет ожидающего удаления");
         }
 
-        // Убираем игрока из списка открытых меню
+        // В любом случае убираем игрока из списка открытых меню
+        // НО НЕ очищаем ожидающее удаление!
         plugin.getRegionMenuManager().closeMenuForPlayer(player);
     }
 }

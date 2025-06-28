@@ -61,7 +61,6 @@ public class HeightExpansionMenu {
 
         plugin.getLogger().info("Игрок " + player.getName() + " открыл меню расширения по высоте региона " + regionId);
     }
-
     /**
      * Добавление информационной кнопки
      */
@@ -187,7 +186,6 @@ public class HeightExpansionMenu {
         item.setItemMeta(meta);
         menu.setItem(slot, item);
     }
-
     /**
      * Добавление кнопки отключения расширения
      */
@@ -282,6 +280,9 @@ public class HeightExpansionMenu {
     /**
      * Обработка клика в меню
      */
+    /**
+     * ИСПРАВЛЕННЫЙ метод обработки клика в меню
+     */
     public boolean handleMenuClick(Player player, int slot, ItemStack clickedItem) {
         String regionId = openHeightMenus.get(player.getUniqueId());
         if (regionId == null) {
@@ -319,10 +320,11 @@ public class HeightExpansionMenu {
                 int buttonSlot = plugin.getConfig().getInt(path + ".slot");
 
                 if (slot == buttonSlot) {
-                    int hours = plugin.getConfig().getInt(path + ".hours");
+                    // ИСПРАВЛЕНИЕ: Правильно читаем время и передаем параметры
+                    double hoursDouble = plugin.getConfig().getDouble(path + ".hours");
                     double price = plugin.getConfig().getDouble(path + ".price");
 
-                    handleTimeExpansion(player, region, hours, price);
+                    handleTimeExpansion(player, region, hoursDouble, price);
                     return true;
                 }
             }
@@ -332,10 +334,22 @@ public class HeightExpansionMenu {
     }
 
     /**
-     * Обработка покупки расширения времени
+     * ИСПРАВЛЕННАЯ обработка покупки расширения времени с правильной сигнатурой
      */
-    private void handleTimeExpansion(Player player, ProtectedRegion region, int hours, double price) {
+    private void handleTimeExpansion(Player player, ProtectedRegion region, double hoursDouble, double price) {
         String regionId = region.getId();
+
+        plugin.getLogger().info("=== НАЧАЛО ОБРАБОТКИ РАСШИРЕНИЯ ===");
+        plugin.getLogger().info("Игрок: " + player.getName());
+        plugin.getLogger().info("Регион: " + regionId);
+        plugin.getLogger().info("Время в часах (double): " + hoursDouble);
+        plugin.getLogger().info("Цена: " + price);
+
+        // Конвертируем в миллисекунды для проверки
+        long timeInMillis = (long) (hoursDouble * 60 * 60 * 1000);
+        plugin.getLogger().info("Время в миллисекундах: " + timeInMillis);
+        plugin.getLogger().info("Время в секундах: " + (timeInMillis / 1000));
+        plugin.getLogger().info("Время в минутах: " + (timeInMillis / 1000 / 60));
 
         // Проверяем экономику
         if (plugin.getEconomy() == null) {
@@ -351,6 +365,18 @@ public class HeightExpansionMenu {
             return;
         }
 
+        // КРИТИЧЕСКОЕ: Проверяем, что регион существует ДО операции
+        ProtectedRegion checkRegion = findRegionById(regionId);
+        if (checkRegion == null) {
+            plugin.getLogger().severe("ОШИБКА: Регион " + regionId + " не найден ДО операции расширения!");
+            player.sendMessage(ChatColor.RED + "Ошибка: регион не найден!");
+            player.closeInventory();
+            return;
+        }
+
+        plugin.getLogger().info("Регион найден, границы ДО операции: " +
+                checkRegion.getMinimumPoint() + " -> " + checkRegion.getMaximumPoint());
+
         // Списываем деньги
         net.milkbowl.vault.economy.EconomyResponse response = plugin.getEconomy().withdrawPlayer(player, price);
         if (!response.transactionSuccess()) {
@@ -358,55 +384,227 @@ public class HeightExpansionMenu {
             return;
         }
 
-        // Активируем/продлеваем расширение
-        if (plugin.getHeightExpansionManager().activateHeightExpansion(regionId, hours)) {
-            boolean wasActive = plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+        plugin.getLogger().info("Деньги списаны успешно");
+
+        // Проверяем было ли активно расширение до покупки
+        boolean wasActive = plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+        plugin.getLogger().info("Было активно расширение ДО операции: " + wasActive);
+
+        // Сохраняем состояние подсветки ДО активации
+        boolean bordersEnabled = plugin.getRegionMenuManager().isRegionBordersEnabled(regionId);
+        plugin.getLogger().info("Состояние подсветки ДО активации: " + bordersEnabled);
+
+        // КРИТИЧЕСКОЕ: Активируем/продлеваем расширение с ПРАВИЛЬНЫМ временем
+        // ИСПРАВЛЕНИЕ: HeightExpansionManager принимает int часов, поэтому конвертируем правильно
+        int hoursForManager = (int) Math.max(1, Math.ceil(hoursDouble)); // Минимум 1 час
+        plugin.getLogger().info("Передаем в HeightExpansionManager часы: " + hoursForManager + " (из " + hoursDouble + ")");
+
+        boolean success = false;
+
+        try {
+            success = plugin.getHeightExpansionManager().activateHeightExpansion(regionId, hoursForManager);
+            plugin.getLogger().info("Результат activateHeightExpansion: " + success);
+        } catch (Exception e) {
+            plugin.getLogger().severe("ИСКЛЮЧЕНИЕ при активации расширения: " + e.getMessage());
+            e.printStackTrace();
+            success = false;
+        }
+
+        if (success) {
+            // КРИТИЧЕСКОЕ: Проверяем, что регион все еще существует ПОСЛЕ операции
+            ProtectedRegion afterRegion = findRegionById(regionId);
+            if (afterRegion == null) {
+                plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Регион " + regionId + " ИСЧЕЗ после операции расширения!");
+
+                // Возвращаем деньги
+                plugin.getEconomy().depositPlayer(player, price);
+                player.sendMessage(ChatColor.RED + "Критическая ошибка: регион исчез! Деньги возвращены.");
+                player.sendMessage(ChatColor.RED + "Пожалуйста, обратитесь к администратору!");
+                player.closeInventory();
+
+                // Отправляем уведомление администраторам
+                for (Player admin : Bukkit.getOnlinePlayers()) {
+                    if (admin.hasPermission("rgprotect.admin")) {
+                        admin.sendMessage(ChatColor.DARK_RED + "[RGProtect] КРИТИЧЕСКАЯ ОШИБКА: Регион " + regionId + " исчез при расширении по высоте!");
+                    }
+                }
+
+                return;
+            }
+
+            plugin.getLogger().info("Регион найден ПОСЛЕ операции, границы: " +
+                    afterRegion.getMinimumPoint() + " -> " + afterRegion.getMaximumPoint());
+
+            // Проверяем состояние границ
+            boolean hasBorders = plugin.getVisualizationManager().hasRegionBorders(regionId);
+            plugin.getLogger().info("Есть ли границы ПОСЛЕ операции: " + hasBorders);
 
             String messageKey = wasActive ? "messages.height-expansion-extended" : "messages.height-expansion-activated";
             String message = plugin.getConfig().getString(messageKey,
                     "&a✅ Регион временно расширен до максимальной высоты на {time}!");
-            message = message.replace("{time}", hours + " час" + (hours > 1 ? "а" : ""));
+
+            // ИСПРАВЛЕНИЕ: Правильно форматируем время для отображения
+            String timeText;
+            if (hoursDouble >= 1.0) {
+                if (hoursDouble == 1.0) {
+                    timeText = "1 час";
+                } else if (hoursDouble < 5.0) {
+                    timeText = (int)hoursDouble + " часа";
+                } else {
+                    timeText = (int)hoursDouble + " часов";
+                }
+            } else {
+                int minutes = (int)(hoursDouble * 60);
+                if (minutes == 1) {
+                    timeText = "1 минуту";
+                } else if (minutes < 5) {
+                    timeText = minutes + " минуты";
+                } else {
+                    timeText = minutes + " минут";
+                }
+            }
+
+            message = message.replace("{time}", timeText);
 
             player.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
             player.sendMessage(ChatColor.GRAY + "Списано: " + formatPrice(price) + " монет");
 
-            // Закрываем меню и открываем заново для обновления
-            player.closeInventory();
+            // Проверяем и восстанавливаем границы если нужно
+            if (bordersEnabled && !hasBorders) {
+                plugin.getLogger().warning("ПРОБЛЕМА: Подсветка включена, но границ нет! Пересоздаем...");
+
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    try {
+                        ProtectedRegion finalRegion = findRegionById(regionId);
+                        if (finalRegion != null) {
+                            plugin.getLogger().info("Принудительное пересоздание границ...");
+                            plugin.getVisualizationManager().removeRegionBorders(regionId);
+                            plugin.getVisualizationManager().createRegionBorders(finalRegion, player.getWorld());
+
+                            boolean hasAfterRecreate = plugin.getVisualizationManager().hasRegionBorders(regionId);
+                            plugin.getLogger().info("Границы после принудительного пересоздания: " + hasAfterRecreate);
+                        }
+                    } catch (Exception e) {
+                        plugin.getLogger().severe("Ошибка при принудительном пересоздании: " + e.getMessage());
+                    }
+                }, 20L);
+            }
+
+            // Обновляем голограмму после успешного расширения
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                openHeightExpansionMenu(player, region);
-            }, 1L);
+                try {
+                    String ownerName = getRegionOwnerName(afterRegion);
+                    plugin.getHologramManager().updateHologram(regionId, ownerName);
+                    plugin.getLogger().info("Голограмма обновлена после расширения по высоте");
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Ошибка при обновлении голограммы: " + e.getMessage());
+                }
+            }, 25L);
+
+            // Закрываем меню
+            player.closeInventory();
+
+            // БЕЗОПАСНОЕ повторное открытие меню
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                try {
+                    // Получаем обновленный регион
+                    ProtectedRegion updatedRegion = findRegionById(regionId);
+                    if (updatedRegion != null) {
+                        plugin.getLogger().info("Открываем обновленное меню для региона " + regionId);
+                        openHeightExpansionMenu(player, updatedRegion);
+                    } else {
+                        plugin.getLogger().warning("Не удалось найти регион для повторного открытия меню");
+                        player.sendMessage(ChatColor.YELLOW + "Расширение активировано, но меню не может быть открыто повторно.");
+
+                        // Открываем основное меню как запасной вариант
+                        ProtectedRegion mainRegion = findRegionById(regionId);
+                        if (mainRegion != null) {
+                            plugin.getRegionMenuManager().openRegionMenu(player, mainRegion);
+                        }
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().severe("Ошибка при повторном открытии меню: " + e.getMessage());
+                    player.sendMessage(ChatColor.YELLOW + "Расширение активировано, но произошла ошибка при открытии меню.");
+                }
+            }, 30L);
 
             // Звуковой эффект
             player.playSound(player.getLocation(), org.bukkit.Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 1.0f);
 
             plugin.getLogger().info("Игрок " + player.getName() + " активировал/продлил расширение по высоте региона " +
-                    regionId + " на " + hours + " часов за " + price + " монет");
+                    regionId + " на " + timeText + " за " + price + " монет");
+
+            plugin.getLogger().info("=== КОНЕЦ ОБРАБОТКИ РАСШИРЕНИЯ (УСПЕХ) ===");
         } else {
             // Возвращаем деньги при ошибке
             plugin.getEconomy().depositPlayer(player, price);
             player.sendMessage(ChatColor.RED + "Ошибка при активации расширения по высоте!");
+            player.sendMessage(ChatColor.YELLOW + "Ваши " + formatPrice(price) + " монет возвращены.");
+
+            // Проверяем, существует ли еще регион
+            ProtectedRegion checkRegionAfter = findRegionById(regionId);
+            if (checkRegionAfter == null) {
+                player.sendMessage(ChatColor.DARK_RED + "КРИТИЧЕСКАЯ ОШИБКА: Регион был потерян!");
+                player.sendMessage(ChatColor.RED + "Пожалуйста, обратитесь к администратору!");
+                player.closeInventory();
+
+                // Логируем критическую ошибку
+                plugin.getLogger().severe("КРИТИЧЕСКАЯ ОШИБКА: Регион " + regionId + " был потерян при попытке расширения!");
+            } else {
+                // Регион существует, можно попробовать снова
+                player.sendMessage(ChatColor.YELLOW + "Попробуйте еще раз позже.");
+            }
+
+            plugin.getLogger().severe("Не удалось активировать расширение по высоте для региона " + regionId);
+            plugin.getLogger().info("=== КОНЕЦ ОБРАБОТКИ РАСШИРЕНИЯ (ОШИБКА) ===");
         }
     }
-
     /**
-     * Обработка отключения расширения
+     * ИСПРАВЛЕННАЯ обработка отключения расширения
      */
     private void handleDisableExpansion(Player player, String regionId) {
-        if (plugin.getHeightExpansionManager().disableHeightExpansion(regionId)) {
+        boolean success = plugin.getHeightExpansionManager().disableHeightExpansion(regionId);
+
+        if (success) {
             String message = plugin.getConfig().getString("messages.height-expansion-disabled",
                     "&e⚡ Временное расширение по высоте отключено. Регион вернулся к обычной высоте.");
             player.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
 
-            // Возвращаемся в основное меню
+            // ИСПРАВЛЕНИЕ: Обновляем голограмму после отключения
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                try {
+                    ProtectedRegion region = findRegionById(regionId);
+                    if (region != null) {
+                        String ownerName = getRegionOwnerName(region);
+                        plugin.getHologramManager().updateHologram(regionId, ownerName);
+                        plugin.getLogger().info("Голограмма обновлена после отключения расширения");
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Ошибка при обновлении голограммы: " + e.getMessage());
+                }
+            }, 10L);
+
+            // Возвращаемся в основное меню с задержкой
             player.closeInventory();
-            ProtectedRegion region = findRegionById(regionId);
-            if (region != null) {
-                plugin.getRegionMenuManager().openRegionMenu(player, region);
-            }
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                try {
+                    ProtectedRegion region = findRegionById(regionId);
+                    if (region != null) {
+                        plugin.getRegionMenuManager().openRegionMenu(player, region);
+                    } else {
+                        player.sendMessage(ChatColor.RED + "Ошибка: регион не найден после отключения расширения!");
+                        plugin.getLogger().severe("Регион " + regionId + " исчез после отключения расширения!");
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().severe("Ошибка при открытии основного меню: " + e.getMessage());
+                    player.sendMessage(ChatColor.RED + "Ошибка при открытии меню региона!");
+                }
+            }, 15L);
 
             plugin.getLogger().info("Игрок " + player.getName() + " отключил расширение по высоте региона " + regionId);
         } else {
             player.sendMessage(ChatColor.RED + "Ошибка при отключении расширения!");
+            plugin.getLogger().warning("Не удалось отключить расширение для региона " + regionId);
         }
     }
 
@@ -440,6 +638,23 @@ public class HeightExpansionMenu {
      */
     public String getOpenMenuRegionId(Player player) {
         return openHeightMenus.get(player.getUniqueId());
+    }
+
+    /**
+     * ДОБАВЛЕННЫЙ вспомогательный метод для получения имени владельца региона
+     */
+    private String getRegionOwnerName(ProtectedRegion region) {
+        if (!region.getOwners().getUniqueIds().isEmpty()) {
+            java.util.UUID ownerUUID = region.getOwners().getUniqueIds().iterator().next();
+            String ownerName = plugin.getServer().getOfflinePlayer(ownerUUID).getName();
+            return ownerName != null ? ownerName : "Unknown";
+        }
+
+        if (!region.getOwners().getPlayers().isEmpty()) {
+            return region.getOwners().getPlayers().iterator().next();
+        }
+
+        return "Unknown";
     }
 
     // Вспомогательные методы

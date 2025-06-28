@@ -16,6 +16,8 @@ import com.yourplugin.rGG.managers.RegionLifetimeMenu;
 import com.yourplugin.rGG.managers.HeightExpansionManager;
 import com.yourplugin.rGG.managers.HeightExpansionMenu;
 
+import java.util.List;
+
 public class RGProtectPlugin extends JavaPlugin {
 
     private static RGProtectPlugin instance;
@@ -104,6 +106,28 @@ public class RGProtectPlugin extends JavaPlugin {
         } else {
             getLogger().info("Система временного расширения по высоте: отключена");
         }
+        // НОВОЕ: Информация о настройках голограмм
+        if (getConfig().getBoolean("hologram.enabled", true)) {
+            getLogger().info("Система голограмм: включена");
+            List<String> hologramLines = getConfig().getStringList("hologram.lines");
+
+            // Проверяем есть ли строка с расширением по высоте
+            boolean hasHeightExpansionLine = false;
+            for (String line : hologramLines) {
+                if (line.contains("{height_expansion}")) {
+                    hasHeightExpansionLine = true;
+                    break;
+                }
+            }
+
+            if (hasHeightExpansionLine) {
+                getLogger().info("Голограммы отображают информацию о расширении по высоте");
+            } else {
+                getLogger().info("Добавьте '{height_expansion}' в hologram.lines для отображения расширения по высоте");
+            }
+        } else {
+            getLogger().info("Система голограмм: отключена");
+        }
 
         // Восстанавливаем границы регионов с учетом сохраненных состояний
         // Задержка в 1 секунду для гарантии полной загрузки миров
@@ -137,7 +161,6 @@ public class RGProtectPlugin extends JavaPlugin {
 
         getLogger().info("RGProtect отключен! Все границы регионов восстановлены.");
     }
-
     /**
      * Восстановление границ регионов при загрузке плагина
      */
@@ -202,7 +225,6 @@ public class RGProtectPlugin extends JavaPlugin {
         getLogger().info("Восстановление завершено: " + restoredBorders + " границ восстановлено, " +
                 skippedBorders + " пропущено (всего регионов: " + totalRegions + ")");
     }
-
     private boolean checkDependencies() {
         return getServer().getPluginManager().getPlugin("WorldGuard") != null &&
                 getServer().getPluginManager().getPlugin("WorldEdit") != null &&
@@ -220,9 +242,7 @@ public class RGProtectPlugin extends JavaPlugin {
         economy = rsp.getProvider();
         return economy != null;
     }
-    // Добавьте эти методы в класс RGProtectPlugin.java:
-
-// НОВЫЕ геттеры для менеджеров (добавить в RGProtectPlugin.java):
+    // НОВЫЕ геттеры для менеджеров:
 
     public RegionTimerManager getRegionTimerManager() {
         return regionTimerManager;

@@ -143,7 +143,13 @@ public class BlockBreakListener implements Listener {
         return false;
     }
 
+    /**
+     * ИСПРАВЛЕННЫЙ метод проверки центрального блока
+     * Теперь ищет блок привата в любой точке центральной колонны
+     */
     private boolean isCenterBlock(Location blockLocation, ProtectedRegion region) {
+        String regionId = region.getId();
+
         // Получаем границы региона
         int regionMinX = region.getMinimumPoint().x();
         int regionMaxX = region.getMaximumPoint().x();
@@ -152,34 +158,45 @@ public class BlockBreakListener implements Listener {
         int regionMinZ = region.getMinimumPoint().z();
         int regionMaxZ = region.getMaximumPoint().z();
 
-        // ИСПРАВЛЕНИЕ: Правильно вычисляем центр для любого размера региона
-        // Центр - это середина между min и max
+        // ИСПРАВЛЕНИЕ: Вычисляем центр по X и Z (они не меняются при расширении по высоте)
         int centerX = (regionMinX + regionMaxX) / 2;
-        int centerY = (regionMinY + regionMaxY) / 2;
         int centerZ = (regionMinZ + regionMaxZ) / 2;
 
-        // Добавляем отладочную информацию
-        if (plugin.getConfig().getBoolean("debug.enabled", true)) {
-            plugin.getLogger().info("DEBUG BREAK: Проверка центра для удаления региона " + region.getId());
-            plugin.getLogger().info("DEBUG BREAK: Ломается блок: " + blockLocation.getBlockX() + "," + blockLocation.getBlockY() + "," + blockLocation.getBlockZ());
-            plugin.getLogger().info("DEBUG BREAK: Границы региона: min(" + regionMinX + "," + regionMinY + "," + regionMinZ + ") max(" + regionMaxX + "," + regionMaxY + "," + regionMaxZ + ")");
-            plugin.getLogger().info("DEBUG BREAK: Вычисленный центр: " + centerX + "," + centerY + "," + centerZ);
-
-            int currentSizeX = regionMaxX - regionMinX + 1;
-            int currentSizeY = regionMaxY - regionMinY + 1;
-            int currentSizeZ = regionMaxZ - regionMinZ + 1;
-            plugin.getLogger().info("DEBUG BREAK: Размер региона: " + currentSizeX + "x" + currentSizeY + "x" + currentSizeZ);
+        // Проверяем X и Z координаты сначала
+        if (blockLocation.getBlockX() != centerX || blockLocation.getBlockZ() != centerZ) {
+            return false; // Не в центре по X/Z
         }
 
-        boolean isCenter = blockLocation.getBlockX() == centerX &&
-                blockLocation.getBlockY() == centerY &&
-                blockLocation.getBlockZ() == centerZ;
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем, является ли кликнутый блок блоком привата
+        try {
+            org.bukkit.Material protectMaterial = org.bukkit.Material.valueOf(
+                    plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
 
-        if (plugin.getConfig().getBoolean("debug.enabled", true)) {
-            plugin.getLogger().info("DEBUG BREAK: Это центральный блок для удаления? " + isCenter);
+            org.bukkit.block.Block clickedBlock = blockLocation.getBlock();
+
+            // Проверяем, является ли кликнутый блок блоком привата
+            if (clickedBlock.getType() == protectMaterial) {
+                if (plugin.getConfig().getBoolean("debug.enabled", true)) {
+                    plugin.getLogger().info("DEBUG BREAK: Найден блок привата в позиции " +
+                            blockLocation.getBlockX() + "," + blockLocation.getBlockY() + "," + blockLocation.getBlockZ());
+
+                    boolean hasHeightExpansion = plugin.getHeightExpansionManager() != null &&
+                            plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+                    plugin.getLogger().info("DEBUG BREAK: Регион расширен по высоте: " + hasHeightExpansion);
+
+                    if (hasHeightExpansion) {
+                        plugin.getLogger().info("DEBUG BREAK: Это блок привата в расширенном по высоте регионе");
+                    }
+                }
+
+                return true; // Это блок привата в центральной позиции
+            }
+
+        } catch (Exception e) {
+            plugin.getLogger().warning("Ошибка при проверке материала блока: " + e.getMessage());
         }
 
-        return isCenter;
+        return false; // Это не блок привата
     }
 
     private void handleRegionBlockBreak(BlockBreakEvent event, Player player, ProtectedRegion region, Location location) {
@@ -197,19 +214,31 @@ public class BlockBreakListener implements Listener {
         String ownerName = getRegionOwnerName(region);
         String regionId = region.getId();
 
-        // НОВАЯ ЛОГИКА: Удаляем границы из красной шерсти
+        // ИСПРАВЛЕНИЕ: Отключаем расширение по высоте если активно
+        if (plugin.getHeightExpansionManager() != null && plugin.getHeightExpansionManager().hasHeightExpansion(regionId)) {
+            plugin.getLogger().info("DEBUG BREAK: Отключаем расширение по высоте перед удалением региона");
+            plugin.getHeightExpansionManager().disableHeightExpansion(regionId);
+        }
+
+        // ИСПРАВЛЕНИЕ: Удаляем границы из красной шерсти
         plugin.getVisualizationManager().removeRegionBorders(regionId);
 
         // Удаляем голограмму
         plugin.getHologramManager().removeHologram(regionId);
 
+        // ИСПРАВЛЕНИЕ: Удаляем таймер если есть
+        if (plugin.getRegionTimerManager() != null && plugin.getRegionTimerManager().hasTimer(regionId)) {
+            plugin.getRegionTimerManager().removeRegionTimer(regionId);
+            plugin.getLogger().info("DEBUG BREAK: Таймер региона удален");
+        }
+
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Убираем центральный блок правильно
+        removeCenterBlockFromRegion(region, location.getWorld());
+
         // Удаляем регион из WorldGuard
         removeRegionFromWorldGuard(location, region);
 
-        // Убираем блок
-        location.getBlock().setType(Material.AIR);
-
-        // Возвращаем блок привата в инвентарь
+        // ИСПРАВЛЕНИЕ: Возвращаем блок привата в инвентарь
         giveProtectBlockBack(player, ownerName);
 
         // Показываем сообщения
@@ -223,6 +252,63 @@ public class BlockBreakListener implements Listener {
         plugin.getLogger().info("Игрок " + player.getName() + " удалил приват " + regionId);
         if (plugin.getConfig().getBoolean("debug.log-border-removal", false)) {
             plugin.getLogger().info("Удалены границы из красной шерсти для региона " + regionId);
+        }
+    }
+
+    /**
+     * ИСПРАВЛЕННЫЙ метод удаления центрального блока
+     * Ищет и удаляет блок привата в центральной колонне
+     */
+    private void removeCenterBlockFromRegion(ProtectedRegion region, org.bukkit.World world) {
+        try {
+            String regionId = region.getId();
+
+            // ИСПРАВЛЕНИЕ: Вычисляем центр только по X/Z
+            int centerX = (region.getMinimumPoint().x() + region.getMaximumPoint().x()) / 2;
+            int centerZ = (region.getMinimumPoint().z() + region.getMaximumPoint().z()) / 2;
+
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Ищем блок привата во всей центральной колонне
+            org.bukkit.Material protectMaterial;
+            try {
+                protectMaterial = org.bukkit.Material.valueOf(
+                        plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+            } catch (IllegalArgumentException e) {
+                protectMaterial = org.bukkit.Material.DIAMOND_BLOCK;
+            }
+
+            plugin.getLogger().info("DEBUG REMOVE: Поиск блока привата в центральной колонне региона " + regionId);
+            plugin.getLogger().info("DEBUG REMOVE: Центр: X=" + centerX + ", Z=" + centerZ);
+            plugin.getLogger().info("DEBUG REMOVE: Границы региона по Y: " + region.getMinimumPoint().y() + " -> " + region.getMaximumPoint().y());
+
+            // Ищем блок привата от верха до низа центральной колонны
+            boolean foundAndRemoved = false;
+            for (int y = region.getMaximumPoint().y(); y >= region.getMinimumPoint().y(); y--) {
+                org.bukkit.Location blockLoc = new org.bukkit.Location(world, centerX, y, centerZ);
+                org.bukkit.block.Block block = blockLoc.getBlock();
+
+                if (block.getType() == protectMaterial) {
+                    block.setType(org.bukkit.Material.AIR);
+                    plugin.getLogger().info("DEBUG REMOVE: ✅ Удален блок привата из позиции " + centerX + "," + y + "," + centerZ);
+                    foundAndRemoved = true;
+                    break; // Блок найден и удален
+                }
+            }
+
+            if (!foundAndRemoved) {
+                plugin.getLogger().warning("DEBUG REMOVE: ❌ Блок привата не найден в центральной колонне региона " + regionId + "!");
+
+                // ДОПОЛНИТЕЛЬНАЯ ДИАГНОСТИКА: Показываем что находится в центральной колонне
+                plugin.getLogger().info("DEBUG REMOVE: Содержимое центральной колонны:");
+                for (int y = region.getMaximumPoint().y(); y >= region.getMinimumPoint().y(); y--) {
+                    org.bukkit.Location blockLoc = new org.bukkit.Location(world, centerX, y, centerZ);
+                    org.bukkit.block.Block block = blockLoc.getBlock();
+                    plugin.getLogger().info("DEBUG REMOVE: Y=" + y + ": " + block.getType());
+                }
+            }
+
+        } catch (Exception e) {
+            plugin.getLogger().severe("Ошибка при удалении центрального блока: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -279,35 +365,48 @@ public class BlockBreakListener implements Listener {
     }
 
     private void giveProtectBlockBack(Player player, String ownerName) {
-        // Создаем блок привата
-        Material blockType = Material.valueOf(plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
-        ItemStack protectBlock = new ItemStack(blockType, 1);
-        ItemMeta meta = protectBlock.getItemMeta();
-
-        String displayName = plugin.getConfig().getString("protect-block.display-name", "&aБлок привата")
-                .replace("{player}", ownerName);
-        meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', displayName));
-
-        List<String> lore = plugin.getConfig().getStringList("protect-block.lore");
-        if (!lore.isEmpty()) {
-            List<String> newLore = new ArrayList<>();
-            for (String line : lore) {
-                newLore.add(ChatColor.translateAlternateColorCodes('&',
-                        line.replace("{player}", ownerName)));
+        try {
+            // Создаем блок привата
+            Material blockType;
+            try {
+                blockType = Material.valueOf(plugin.getConfig().getString("protect-block.material", "DIAMOND_BLOCK"));
+            } catch (IllegalArgumentException e) {
+                blockType = Material.DIAMOND_BLOCK;
             }
-            // Добавляем скрытый тег
-            newLore.add(ChatColor.DARK_GRAY + "RGProtect:" + ownerName);
-            meta.setLore(newLore);
-        }
 
-        protectBlock.setItemMeta(meta);
+            ItemStack protectBlock = new ItemStack(blockType, 1);
+            ItemMeta meta = protectBlock.getItemMeta();
 
-        // Даем игроку блок
-        if (player.getInventory().firstEmpty() != -1) {
-            player.getInventory().addItem(protectBlock);
-        } else {
-            player.getWorld().dropItemNaturally(player.getLocation(), protectBlock);
-            player.sendMessage(ChatColor.YELLOW + "Блок привата выпал на землю - инвентарь полон!");
+            String displayName = plugin.getConfig().getString("protect-block.display-name", "&aБлок привата")
+                    .replace("{player}", ownerName);
+            meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', displayName));
+
+            List<String> lore = plugin.getConfig().getStringList("protect-block.lore");
+            if (!lore.isEmpty()) {
+                List<String> newLore = new ArrayList<>();
+                for (String line : lore) {
+                    newLore.add(ChatColor.translateAlternateColorCodes('&',
+                            line.replace("{player}", ownerName)));
+                }
+                // Добавляем скрытый тег
+                newLore.add(ChatColor.DARK_GRAY + "RGProtect:" + ownerName);
+                meta.setLore(newLore);
+            }
+
+            protectBlock.setItemMeta(meta);
+
+            // ИСПРАВЛЕНИЕ: Даем игроку блок правильно
+            if (player.getInventory().firstEmpty() != -1) {
+                player.getInventory().addItem(protectBlock);
+                player.sendMessage(ChatColor.GREEN + "Блок привата возвращен в инвентарь!");
+            } else {
+                player.getWorld().dropItemNaturally(player.getLocation(), protectBlock);
+                player.sendMessage(ChatColor.YELLOW + "Блок привата выпал на землю - инвентарь полон!");
+            }
+
+        } catch (Exception e) {
+            plugin.getLogger().severe("Ошибка при возврате блока привата: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

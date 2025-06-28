@@ -38,6 +38,7 @@ public class HologramManager {
             lines.add("&6Регион игрока: &e{player}");
             lines.add("&7Создан: &f{date}");
             lines.add("&7Время жизни: &f{timer}");
+            lines.add("&7Расширение ↕: &f{height_expansion}");
         }
 
         String currentDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
@@ -50,10 +51,16 @@ public class HologramManager {
                     .replace("{player}", playerName)
                     .replace("{date}", currentDate);
 
-            // НОВОЕ: Обработка тега {timer}
+            // ОБНОВЛЕНО: Обработка тега {timer}
             if (line.contains("{timer}")) {
                 String timerText = getTimerText(regionName);
                 line = line.replace("{timer}", timerText);
+            }
+
+            // НОВОЕ: Обработка тега {height_expansion}
+            if (line.contains("{height_expansion}")) {
+                String heightExpansionText = getHeightExpansionText(regionName);
+                line = line.replace("{height_expansion}", heightExpansionText);
             }
 
             line = ChatColor.translateAlternateColorCodes('&', line);
@@ -76,7 +83,21 @@ public class HologramManager {
     }
 
     /**
-     * НОВЫЙ метод для получения текста таймера
+     * НОВЫЙ метод для получения текста расширения по высоте
+     */
+    private String getHeightExpansionText(String regionName) {
+        if (plugin.getHeightExpansionManager() != null &&
+                plugin.getHeightExpansionManager().hasHeightExpansion(regionName)) {
+
+            String remainingTime = plugin.getHeightExpansionManager().getFormattedRemainingTime(regionName);
+            return ChatColor.LIGHT_PURPLE + "Активно (" + remainingTime + ")";
+        } else {
+            return ChatColor.GRAY + "Неактивно";
+        }
+    }
+
+    /**
+     * ОБНОВЛЕННЫЙ метод для получения текста таймера
      */
     private String getTimerText(String regionName) {
         if (plugin.getRegionTimerManager() != null && plugin.getRegionTimerManager().hasTimer(regionName)) {
@@ -124,10 +145,16 @@ public class HologramManager {
                         .replace("{player}", playerName)
                         .replace("{date}", currentDate);
 
-                // НОВОЕ: Обработка тега {timer}
+                // ОБНОВЛЕНО: Обработка тега {timer}
                 if (line.contains("{timer}")) {
                     String timerText = getTimerText(regionName);
                     line = line.replace("{timer}", timerText);
+                }
+
+                // НОВОЕ: Обработка тега {height_expansion}
+                if (line.contains("{height_expansion}")) {
+                    String heightExpansionText = getHeightExpansionText(regionName);
+                    line = line.replace("{height_expansion}", heightExpansionText);
                 }
 
                 line = ChatColor.translateAlternateColorCodes('&', line);
@@ -150,7 +177,7 @@ public class HologramManager {
                     if (stands.isEmpty()) {
                         holograms.remove(entry.getKey());
                     } else {
-                        // НОВОЕ: Обновляем голограммы для отображения актуального времени жизни
+                        // ОБНОВЛЕНО: Обновляем голограммы для отображения актуального времени жизни И расширения по высоте
                         String regionName = entry.getKey();
                         String ownerName = getRegionOwnerName(regionName);
                         if (ownerName != null) {
@@ -163,7 +190,7 @@ public class HologramManager {
     }
 
     /**
-     * НОВЫЙ метод для получения имени владельца региона
+     * ОБНОВЛЕННЫЙ метод для получения имени владельца региона
      */
     private String getRegionOwnerName(String regionName) {
         // Ищем регион во всех мирах
