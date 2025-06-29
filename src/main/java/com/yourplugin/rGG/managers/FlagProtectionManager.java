@@ -146,13 +146,9 @@ public class FlagProtectionManager {
                 plugin.getLogger().info("Сохранено оригинальное значение флага " + flagName + ": " + originalValue);
             }
 
-            // Применяем новое значение флага
+            // Применяем новое значение флага - ИСПРАВЛЕНО
             Object newValue = getFlagValue(flagName);
-            if (worldGuardFlag instanceof StateFlag) {
-                region.setFlag((StateFlag) worldGuardFlag, (StateFlag.State) newValue);
-            } else {
-                region.setFlag(worldGuardFlag, newValue);
-            }
+            setRegionFlag(region, worldGuardFlag, newValue);
 
             plugin.getLogger().info("Применено новое значение флага " + flagName + ": " + newValue);
 
@@ -179,6 +175,30 @@ public class FlagProtectionManager {
     }
 
     /**
+     * ИСПРАВЛЕННЫЙ метод установки флага
+     */
+    @SuppressWarnings("unchecked")
+    private void setRegionFlag(ProtectedRegion region, Flag<?> flag, Object value) {
+        if (flag instanceof StateFlag) {
+            region.setFlag((StateFlag) flag, (StateFlag.State) value);
+        } else {
+            // Для других типов флагов используем рефлексию
+            try {
+                java.lang.reflect.Method setFlagMethod = region.getClass().getMethod("setFlag", Flag.class, Object.class);
+                setFlagMethod.invoke(region, flag, value);
+            } catch (Exception e) {
+                plugin.getLogger().warning("Не удалось установить флаг " + flag.getName() + ": " + e.getMessage());
+                // Пытаемся установить как StateFlag
+                if (value instanceof StateFlag.State) {
+                    region.setFlag((StateFlag) flag, (StateFlag.State) value);
+                } else {
+                    plugin.getLogger().severe("Не удается установить флаг " + flag.getName());
+                }
+            }
+        }
+    }
+
+    /**
      * Получение WorldGuard флага по имени
      */
     private Flag<?> getWorldGuardFlag(String flagName) {
@@ -186,6 +206,7 @@ public class FlagProtectionManager {
             case "pvp":
                 return Flags.PVP;
             case "explosion_protection":
+            case "tnt":
                 return Flags.TNT;
             case "mob_damage":
                 return Flags.MOB_DAMAGE;
@@ -214,6 +235,7 @@ public class FlagProtectionManager {
             case "exit":
                 return Flags.EXIT;
             default:
+                plugin.getLogger().warning("Неизвестный флаг: " + flagName);
                 return null;
         }
     }
@@ -436,12 +458,7 @@ public class FlagProtectionManager {
                     }
                 }
 
-                if (worldGuardFlag instanceof StateFlag) {
-                    region.setFlag((StateFlag) worldGuardFlag, (StateFlag.State) originalValue);
-                } else {
-                    region.setFlag(worldGuardFlag, originalValue);
-                }
-
+                setRegionFlag(region, worldGuardFlag, originalValue);
                 plugin.getLogger().info("Восстановлено оригинальное значение флага " + flagName + ": " + originalValue);
             }
         } catch (Exception e) {

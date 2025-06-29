@@ -61,6 +61,7 @@ public class HeightExpansionMenu {
 
         plugin.getLogger().info("Игрок " + player.getName() + " открыл меню расширения по высоте региона " + regionId);
     }
+
     /**
      * Добавление информационной кнопки
      */
@@ -117,10 +118,21 @@ public class HeightExpansionMenu {
             String path = "height-expansion-menu.time-options." + key;
 
             int slot = plugin.getConfig().getInt(path + ".slot");
-            int hours = plugin.getConfig().getInt(path + ".hours");
+
+            // ИСПРАВЛЕНО: Проверяем наличие параметра seconds в первую очередь
+            int timeInSeconds;
+            if (plugin.getConfig().contains(path + ".seconds")) {
+                timeInSeconds = plugin.getConfig().getInt(path + ".seconds");
+            } else if (plugin.getConfig().contains(path + ".hours")) {
+                timeInSeconds = plugin.getConfig().getInt(path + ".hours") * 3600;
+            } else {
+                plugin.getLogger().warning("Не найдено время для опции " + key + " в height-expansion-menu");
+                continue;
+            }
+
             double price = plugin.getConfig().getDouble(path + ".price");
             String materialName = plugin.getConfig().getString(path + ".material", "IRON_INGOT");
-            String displayName = plugin.getConfig().getString(path + ".name", "&a+{hours} часов");
+            String displayName = plugin.getConfig().getString(path + ".name", "&a+{time}");
             List<String> lore = plugin.getConfig().getStringList(path + ".lore");
 
             Material material;
@@ -133,9 +145,13 @@ public class HeightExpansionMenu {
             ItemStack item = new ItemStack(material);
             ItemMeta meta = item.getItemMeta();
 
+            // Форматируем время для отображения
+            String timeDisplay = formatTimeForDisplay(timeInSeconds);
+
             // Форматируем название
             String formattedName = displayName
-                    .replace("{hours}", String.valueOf(hours))
+                    .replace("{time}", timeDisplay)
+                    .replace("{seconds}", String.valueOf(timeInSeconds))
                     .replace("{price}", formatPrice(price));
             meta.setDisplayName(ChatColor.translateAlternateColorCodes('&', formattedName));
 
@@ -143,7 +159,8 @@ public class HeightExpansionMenu {
             List<String> formattedLore = new ArrayList<>();
             for (String line : lore) {
                 String formattedLine = line
-                        .replace("{hours}", String.valueOf(hours))
+                        .replace("{time}", timeDisplay)
+                        .replace("{seconds}", String.valueOf(timeInSeconds))
                         .replace("{price}", formatPrice(price));
                 formattedLore.add(ChatColor.translateAlternateColorCodes('&', formattedLine));
             }
@@ -161,6 +178,43 @@ public class HeightExpansionMenu {
             meta.setLore(formattedLore);
             item.setItemMeta(meta);
             menu.setItem(slot, item);
+        }
+    }
+
+    /**
+     * НОВЫЙ метод для форматирования времени для отображения
+     */
+    private String formatTimeForDisplay(int seconds) {
+        if (seconds < 60) {
+            return seconds + " секунд";
+        } else if (seconds < 3600) {
+            int minutes = seconds / 60;
+            if (seconds % 60 == 0) {
+                return minutes + " минут";
+            } else {
+                return minutes + " минут " + (seconds % 60) + " секунд";
+            }
+        } else {
+            int hours = seconds / 3600;
+            int remainingMinutes = (seconds % 3600) / 60;
+            if (remainingMinutes == 0) {
+                return hours + " час" + getHoursSuffix(hours);
+            } else {
+                return hours + " час" + getHoursSuffix(hours) + " " + remainingMinutes + " минут";
+            }
+        }
+    }
+
+    /**
+     * НОВЫЙ метод для правильных окончаний часов
+     */
+    private String getHoursSuffix(int hours) {
+        if (hours % 10 == 1 && hours % 100 != 11) {
+            return "";
+        } else if ((hours % 10 >= 2 && hours % 10 <= 4) && (hours % 100 < 10 || hours % 100 >= 20)) {
+            return "а";
+        } else {
+            return "ов";
         }
     }
 
@@ -186,6 +240,7 @@ public class HeightExpansionMenu {
         item.setItemMeta(meta);
         menu.setItem(slot, item);
     }
+
     /**
      * Добавление кнопки отключения расширения
      */
@@ -280,9 +335,6 @@ public class HeightExpansionMenu {
     /**
      * Обработка клика в меню
      */
-    /**
-     * ИСПРАВЛЕННЫЙ метод обработки клика в меню
-     */
     public boolean handleMenuClick(Player player, int slot, ItemStack clickedItem) {
         String regionId = openHeightMenus.get(player.getUniqueId());
         if (regionId == null) {
@@ -321,10 +373,19 @@ public class HeightExpansionMenu {
 
                 if (slot == buttonSlot) {
                     // ИСПРАВЛЕНИЕ: Правильно читаем время и передаем параметры
-                    double hoursDouble = plugin.getConfig().getDouble(path + ".hours");
+                    int timeInSeconds;
+                    if (plugin.getConfig().contains(path + ".seconds")) {
+                        timeInSeconds = plugin.getConfig().getInt(path + ".seconds");
+                    } else if (plugin.getConfig().contains(path + ".hours")) {
+                        timeInSeconds = plugin.getConfig().getInt(path + ".hours") * 3600;
+                    } else {
+                        plugin.getLogger().warning("Не найдено время для опции " + key);
+                        return true;
+                    }
+
                     double price = plugin.getConfig().getDouble(path + ".price");
 
-                    handleTimeExpansion(player, region, hoursDouble, price);
+                    handleTimeExpansion(player, region, timeInSeconds, price);
                     return true;
                 }
             }
@@ -334,22 +395,16 @@ public class HeightExpansionMenu {
     }
 
     /**
-     * ИСПРАВЛЕННАЯ обработка покупки расширения времени с правильной сигнатурой
+     * ИСПРАВЛЕННАЯ обработка покупки расширения времени
      */
-    private void handleTimeExpansion(Player player, ProtectedRegion region, double hoursDouble, double price) {
+    private void handleTimeExpansion(Player player, ProtectedRegion region, int durationSeconds, double price) {
         String regionId = region.getId();
 
         plugin.getLogger().info("=== НАЧАЛО ОБРАБОТКИ РАСШИРЕНИЯ ===");
         plugin.getLogger().info("Игрок: " + player.getName());
         plugin.getLogger().info("Регион: " + regionId);
-        plugin.getLogger().info("Время в часах (double): " + hoursDouble);
+        plugin.getLogger().info("Время в секундах: " + durationSeconds);
         plugin.getLogger().info("Цена: " + price);
-
-        // Конвертируем в миллисекунды для проверки
-        long timeInMillis = (long) (hoursDouble * 60 * 60 * 1000);
-        plugin.getLogger().info("Время в миллисекундах: " + timeInMillis);
-        plugin.getLogger().info("Время в секундах: " + (timeInMillis / 1000));
-        plugin.getLogger().info("Время в минутах: " + (timeInMillis / 1000 / 60));
 
         // Проверяем экономику
         if (plugin.getEconomy() == null) {
@@ -387,23 +442,21 @@ public class HeightExpansionMenu {
         plugin.getLogger().info("Деньги списаны успешно");
 
         // Проверяем было ли активно расширение до покупки
-        boolean wasActive = plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
+        boolean wasActive = plugin.getHeightExpansionManager() != null &&
+                plugin.getHeightExpansionManager().hasHeightExpansion(regionId);
         plugin.getLogger().info("Было активно расширение ДО операции: " + wasActive);
 
         // Сохраняем состояние подсветки ДО активации
         boolean bordersEnabled = plugin.getRegionMenuManager().isRegionBordersEnabled(regionId);
         plugin.getLogger().info("Состояние подсветки ДО активации: " + bordersEnabled);
 
-        // КРИТИЧЕСКОЕ: Активируем/продлеваем расширение с ПРАВИЛЬНЫМ временем
-        // ИСПРАВЛЕНИЕ: HeightExpansionManager принимает int часов, поэтому конвертируем правильно
-        int hoursForManager = (int) Math.max(1, Math.ceil(hoursDouble)); // Минимум 1 час
-        plugin.getLogger().info("Передаем в HeightExpansionManager часы: " + hoursForManager + " (из " + hoursDouble + ")");
-
+        // КРИТИЧЕСКОЕ: Активируем/продлеваем расширение
+        // ИСПРАВЛЕНИЕ: Используем новый метод activateHeightExpansionSeconds
         boolean success = false;
 
         try {
-            success = plugin.getHeightExpansionManager().activateHeightExpansion(regionId, hoursForManager);
-            plugin.getLogger().info("Результат activateHeightExpansion: " + success);
+            success = plugin.getHeightExpansionManager().activateHeightExpansionSeconds(regionId, durationSeconds);
+            plugin.getLogger().info("Результат activateHeightExpansionSeconds: " + success);
         } catch (Exception e) {
             plugin.getLogger().severe("ИСКЛЮЧЕНИЕ при активации расширения: " + e.getMessage());
             e.printStackTrace();
@@ -444,26 +497,7 @@ public class HeightExpansionMenu {
                     "&a✅ Регион временно расширен до максимальной высоты на {time}!");
 
             // ИСПРАВЛЕНИЕ: Правильно форматируем время для отображения
-            String timeText;
-            if (hoursDouble >= 1.0) {
-                if (hoursDouble == 1.0) {
-                    timeText = "1 час";
-                } else if (hoursDouble < 5.0) {
-                    timeText = (int)hoursDouble + " часа";
-                } else {
-                    timeText = (int)hoursDouble + " часов";
-                }
-            } else {
-                int minutes = (int)(hoursDouble * 60);
-                if (minutes == 1) {
-                    timeText = "1 минуту";
-                } else if (minutes < 5) {
-                    timeText = minutes + " минуты";
-                } else {
-                    timeText = minutes + " минут";
-                }
-            }
-
+            String timeText = formatTimeForDisplay(durationSeconds);
             message = message.replace("{time}", timeText);
 
             player.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
@@ -559,6 +593,7 @@ public class HeightExpansionMenu {
             plugin.getLogger().info("=== КОНЕЦ ОБРАБОТКИ РАСШИРЕНИЯ (ОШИБКА) ===");
         }
     }
+
     /**
      * ИСПРАВЛЕННАЯ обработка отключения расширения
      */
