@@ -1543,6 +1543,9 @@ public class RegionMenuManager {
     /**
      * Метод прямого удаления региона с подробным логированием
      */
+    /**
+     * Метод прямого удаления региона с подробным логированием
+     */
     public void deleteRegionDirectly(Player player, ProtectedRegion region) {
         if (player == null || region == null) {
             plugin.getLogger().warning("deleteRegionDirectly вызван с null параметрами");
@@ -1555,28 +1558,11 @@ public class RegionMenuManager {
         plugin.getLogger().info("DEBUG DELETE: Начало удаления региона " + regionId + " владельца " + ownerName);
 
         try {
-            World regionWorld = null;
+            World regionWorld = findWorldForRegion(regionId);
             Object regionManager = null;
 
-            plugin.getLogger().info("DEBUG DELETE: Поиск мира для региона...");
-
-            // Ищем мир региона
-            for (World world : plugin.getServer().getWorlds()) {
-                Object rm = plugin.getProtectRegionManager().getWorldGuardRegionManager(world);
-                if (rm != null) {
-                    try {
-                        java.lang.reflect.Method getRegionMethod = rm.getClass().getMethod("getRegion", String.class);
-                        ProtectedRegion testRegion = (ProtectedRegion) getRegionMethod.invoke(rm, regionId);
-                        if (testRegion != null && testRegion.getId().equals(regionId)) {
-                            regionWorld = world;
-                            regionManager = rm;
-                            plugin.getLogger().info("DEBUG DELETE: Регион найден в мире: " + world.getName());
-                            break;
-                        }
-                    } catch (Exception e) {
-                        // Игнорируем
-                    }
-                }
+            if (regionWorld != null) {
+                regionManager = plugin.getProtectRegionManager().getWorldGuardRegionManager(regionWorld);
             }
 
             if (regionWorld == null || regionManager == null) {
@@ -1607,16 +1593,6 @@ public class RegionMenuManager {
             if (plugin.getHeightExpansionManager() != null && plugin.getHeightExpansionManager().hasHeightExpansion(regionId)) {
                 plugin.getHeightExpansionManager().disableHeightExpansion(regionId);
                 plugin.getLogger().info("DEBUG DELETE: Расширение по высоте отключено");
-            }
-
-            // Отключаем защитные флаги если есть
-            if (plugin.getFlagProtectionManager() != null) {
-                try {
-                    plugin.getLogger().info("DEBUG DELETE: Обрабатываем защитные флаги для региона " + regionId);
-                    // Просто уведомляем FlagProtectionManager - он сам должен очистить данные
-                } catch (Exception e) {
-                    plugin.getLogger().warning("Ошибка при обработке защитных флагов: " + e.getMessage());
-                }
             }
 
             plugin.getLogger().info("DEBUG DELETE: Удаляем центральный блок...");
@@ -2045,47 +2021,6 @@ public class RegionMenuManager {
     /**
      * Проверка прав на удаление региона
      */
-    private boolean canPlayerDeleteRegion(Player player, ProtectedRegion region) {
-        if (player == null || region == null) {
-            return false;
-        }
-
-        // Админы могут удалять любые приваты
-        if (player.hasPermission("rgprotect.admin")) {
-            return true;
-        }
-
-        UUID playerId = player.getUniqueId();
-        String playerName = player.getName();
-
-        // Только владелец может удалять
-        return region.getOwners().contains(playerId) || region.getOwners().contains(playerName);
-    }
-
-    /**
-     * Проверка прав доступа игрока к региону
-     */
-    private boolean canPlayerAccessRegion(Player player, ProtectedRegion region) {
-        if (player == null || region == null) {
-            return false;
-        }
-
-        // Админы могут всегда
-        if (player.hasPermission("rgprotect.admin")) {
-            return true;
-        }
-
-        UUID playerId = player.getUniqueId();
-        String playerName = player.getName();
-
-        // Владелец может всегда
-        if (region.getOwners().contains(playerId) || region.getOwners().contains(playerName)) {
-            return true;
-        }
-
-        // Члены региона могут (если добавлены)
-        return region.getMembers().contains(playerId) || region.getMembers().contains(playerName);
-    }
 
     /**
      * Проверка, является ли игрок владельцем региона
@@ -2127,7 +2062,33 @@ public class RegionMenuManager {
             return null;
         }
     }
+    /**
+     * Получение имени владельца региона
+     */
+    private String getRegionOwnerName(ProtectedRegion region) {
+        if (region == null) {
+            return "Неизвестно";
+        }
 
+        try {
+            // Сначала пробуем получить по UUID
+            if (!region.getOwners().getUniqueIds().isEmpty()) {
+                UUID ownerUUID = region.getOwners().getUniqueIds().iterator().next();
+                String ownerName = plugin.getServer().getOfflinePlayer(ownerUUID).getName();
+                return ownerName != null ? ownerName : "Неизвестно";
+            }
+
+            // Если UUID нет, пробуем получить по имени (deprecated, но для совместимости)
+            if (!region.getOwners().getPlayers().isEmpty()) {
+                return region.getOwners().getPlayers().iterator().next();
+            }
+
+            return "Неизвестно";
+        } catch (Exception e) {
+            plugin.getLogger().warning("Ошибка при получении владельца региона: " + e.getMessage());
+            return "Неизвестно";
+        }
+    }
     /**
      * Форматирование цены
      */
@@ -2262,7 +2223,10 @@ public class RegionMenuManager {
                     }
                 }
             } catch (Exception e) {
-                // Игнорируем ошибки поиска
+                // Игнорируем ошибки поиска в конкретном мире
+                if (plugin.getConfig().getBoolean("debug.log-region-search-errors", false)) {
+                    plugin.getLogger().warning("Ошибка поиска региона " + regionId + " в мире " + world.getName() + ": " + e.getMessage());
+                }
             }
         }
         return null;
