@@ -3,10 +3,13 @@ C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\BlockBreak
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\BlockInteractListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\BlockPlaceListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\ChatListener.java
+C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\FlagProtectionMenuListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\HeightExpansionMenuListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\LifetimeMenuListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\MenuListener.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\listeners\PlayerMoveListener.java
+C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\managers\FlagProtectionManager.java
+C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\managers\FlagProtectionMenu.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\managers\HeightExpansionManager.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\managers\HeightExpansionMenu.java
 C:\Users\DJEKA\Desktop\RGG\src\main\java\com\yourplugin\rGG\managers\HologramManager.java

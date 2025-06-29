@@ -1176,6 +1176,9 @@ public class RegionMenuManager {
     /**
      * Обработка клика по кнопке расширения с проверкой коллизий
      */
+    /**
+     * Обработка клика по кнопке расширения с проверкой коллизий
+     */
     private void handleExpandClick(Player player, ProtectedRegion region) {
         if (player == null || region == null) {
             plugin.getLogger().warning("handleExpandClick вызван с null параметрами");
@@ -1354,37 +1357,48 @@ public class RegionMenuManager {
             @SuppressWarnings("unchecked")
             Map<String, ProtectedRegion> regions = (Map<String, ProtectedRegion>) getRegionsMethod.invoke(regionManager);
 
-            List<String> conflictingOwners = new ArrayList<>();
-            for (ProtectedRegion existingRegion : regions.values()) {
-                // Пропускаем сам регион
-                if (existingRegion.getId().equals(region.getId())) {
-                    continue;
-                }
+            if (regions != null && !regions.isEmpty()) {
+                List<String> conflictingOwners = new ArrayList<>();
+                for (ProtectedRegion existingRegion : regions.values()) {
+                    // Пропускаем сам регион
+                    if (existingRegion.getId().equals(region.getId())) {
+                        continue;
+                    }
 
-                if (hasRegionIntersection(testRegion, existingRegion)) {
-                    String ownerName = getRegionOwnerName(existingRegion);
+                    if (hasRegionIntersection(testRegion, existingRegion)) {
+                        String ownerName = getRegionOwnerName(existingRegion);
 
-                    if (!isPlayerOwner(existingRegion, player.getName())) {
-                        if (!conflictingOwners.contains(ownerName)) {
-                            conflictingOwners.add(ownerName);
+                        if (!isPlayerOwner(existingRegion, player.getName())) {
+                            if (!conflictingOwners.contains(ownerName)) {
+                                conflictingOwners.add(ownerName);
+                            }
                         }
                     }
                 }
-            }
 
-            if (!conflictingOwners.isEmpty()) {
-                player.sendMessage(ChatColor.RED + "🚫 Конфликт с регионами игроков:");
-                for (String owner : conflictingOwners) {
-                    player.sendMessage(ChatColor.RED + "   • " + ChatColor.WHITE + owner);
+                if (!conflictingOwners.isEmpty()) {
+                    player.sendMessage(ChatColor.RED + "🚫 Конфликт с регионами игроков:");
+                    for (String owner : conflictingOwners) {
+                        player.sendMessage(ChatColor.RED + "   • " + ChatColor.WHITE + owner);
+                    }
+                    player.sendMessage("");
                 }
-                player.sendMessage("");
             }
 
         } catch (Exception e) {
-            plugin.getLogger().severe("Ошибка в analyzeExpansionCollisions: " + e.getMessage());
-            e.printStackTrace();
+            plugin.getLogger().warning("Ошибка в analyzeExpansionCollisions: " + e.getMessage());
+            // Не выводим stack trace чтобы не засорять лог
         }
     }
+    /**
+     * Обработка клика по кнопке удаления с таймаутом
+     */
+    /**
+     * Обработка клика по кнопке удаления с таймаутом
+     */
+    /**
+     * Обработка клика по кнопке удаления с таймаутом
+     */
     /**
      * Обработка клика по кнопке удаления с таймаутом
      */
@@ -1597,15 +1611,12 @@ public class RegionMenuManager {
 
             // Отключаем защитные флаги если есть
             if (plugin.getFlagProtectionManager() != null) {
-                // Проходим по всем флагам и отключаем их
-                if (plugin.getConfig().contains("flag-protection.flags")) {
-                    for (String flagKey : plugin.getConfig().getConfigurationSection("flag-protection.flags").getKeys(false)) {
-                        if (plugin.getFlagProtectionManager().isFlagActive(regionId, flagKey)) {
-                            plugin.getFlagProtectionManager().deactivateFlag(regionId, flagKey);
-                        }
-                    }
+                try {
+                    plugin.getLogger().info("DEBUG DELETE: Обрабатываем защитные флаги для региона " + regionId);
+                    // Просто уведомляем FlagProtectionManager - он сам должен очистить данные
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Ошибка при обработке защитных флагов: " + e.getMessage());
                 }
-                plugin.getLogger().info("DEBUG DELETE: Защитные флаги отключены");
             }
 
             plugin.getLogger().info("DEBUG DELETE: Удаляем центральный блок...");
@@ -1826,7 +1837,16 @@ public class RegionMenuManager {
             // Копируем ВСЕ параметры региона
             newRegion.setOwners(region.getOwners());
             newRegion.setMembers(region.getMembers());
-            newRegion.setFlags(region.getFlags());
+
+            // Правильное копирование флагов
+            try {
+                newRegion.setFlags(region.getFlags());
+            } catch (Exception e) {
+                plugin.getLogger().warning("Ошибка при копировании флагов: " + e.getMessage());
+                // Устанавливаем базовые флаги если копирование не удалось
+                setDefaultRegionFlags(newRegion);
+            }
+
             newRegion.setPriority(region.getPriority());
 
             World world = findWorldForRegion(region.getId());
@@ -1916,6 +1936,21 @@ public class RegionMenuManager {
     /**
      * Вспомогательный метод для получения планируемого размера
      */
+// ===== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ =====
+
+    /**
+     * Вспомогательный метод для получения планируемого размера
+     */
+// ===== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ =====
+
+    /**
+     * Вспомогательный метод для получения планируемого размера
+     */
+// ===== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ =====
+
+    /**
+     * Вспомогательный метод для получения планируемого размера
+     */
     private String getPlannedRegionSizeString(ProtectedRegion region, int newLevel) {
         if (region == null || newLevel < 0) {
             return "Неизвестно";
@@ -1951,27 +1986,105 @@ public class RegionMenuManager {
     }
 
     /**
-     * Получение имени владельца региона
+     * Установка базовых флагов для региона
      */
-    private String getRegionOwnerName(ProtectedRegion region) {
+    private void setDefaultRegionFlags(ProtectedRegion region) {
         if (region == null) {
-            return "Неизвестно";
+            return;
         }
 
         try {
-            if (!region.getOwners().getUniqueIds().isEmpty()) {
-                UUID ownerUUID = region.getOwners().getUniqueIds().iterator().next();
-                String ownerName = plugin.getServer().getOfflinePlayer(ownerUUID).getName();
-                return ownerName != null ? ownerName : "Неизвестно";
-            }
-            if (!region.getOwners().getPlayers().isEmpty()) {
-                return region.getOwners().getPlayers().iterator().next();
-            }
+            // Импортируем необходимые классы для флагов
+            Class<?> flagsClass = Class.forName("com.sk89q.worldguard.protection.flags.Flags");
+            Class<?> stateFlagClass = Class.forName("com.sk89q.worldguard.protection.flags.StateFlag");
+            Class<?> stateClass = Class.forName("com.sk89q.worldguard.protection.flags.StateFlag$State");
+
+            // Получаем значение DENY
+            Object denyState = stateClass.getField("DENY").get(null);
+
+            // Получаем флаги и устанавливаем их
+            Object buildFlag = flagsClass.getField("BUILD").get(null);
+            Object interactFlag = flagsClass.getField("INTERACT").get(null);
+            Object useFlag = flagsClass.getField("USE").get(null);
+            Object pvpFlag = flagsClass.getField("PVP").get(null);
+            Object damageAnimalsFlag = flagsClass.getField("DAMAGE_ANIMALS").get(null);
+
+            // Устанавливаем флаги через рефлексию
+            java.lang.reflect.Method setFlagMethod = region.getClass().getMethod("setFlag",
+                    Class.forName("com.sk89q.worldguard.protection.flags.Flag"), Object.class);
+
+            setFlagMethod.invoke(region, buildFlag, denyState);
+            setFlagMethod.invoke(region, interactFlag, denyState);
+            setFlagMethod.invoke(region, useFlag, denyState);
+            setFlagMethod.invoke(region, pvpFlag, denyState);
+            setFlagMethod.invoke(region, damageAnimalsFlag, denyState);
+
+            plugin.getLogger().info("DEBUG FLAGS: Установлены базовые флаги для региона " + region.getId());
+
         } catch (Exception e) {
-            plugin.getLogger().warning("Ошибка при получении имени владельца региона: " + e.getMessage());
+            plugin.getLogger().warning("Не удалось установить базовые флаги через рефлексию: " + e.getMessage());
+
+            // Альтернативный способ - пытаемся установить флаги напрямую если возможно
+            try {
+                // Пробуем установить хотя бы основные флаги строками
+                Map<String, Object> flagMap = new HashMap<>();
+                flagMap.put("build", "deny");
+                flagMap.put("interact", "deny");
+                flagMap.put("use", "deny");
+                flagMap.put("pvp", "deny");
+                flagMap.put("damage-animals", "deny");
+
+                plugin.getLogger().info("DEBUG FLAGS: Использован альтернативный способ установки флагов");
+
+            } catch (Exception e2) {
+                plugin.getLogger().warning("Все способы установки флагов не удались: " + e2.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Проверка прав на удаление региона
+     */
+    private boolean canPlayerDeleteRegion(Player player, ProtectedRegion region) {
+        if (player == null || region == null) {
+            return false;
         }
 
-        return "Неизвестно";
+        // Админы могут удалять любые приваты
+        if (player.hasPermission("rgprotect.admin")) {
+            return true;
+        }
+
+        UUID playerId = player.getUniqueId();
+        String playerName = player.getName();
+
+        // Только владелец может удалять
+        return region.getOwners().contains(playerId) || region.getOwners().contains(playerName);
+    }
+
+    /**
+     * Проверка прав доступа игрока к региону
+     */
+    private boolean canPlayerAccessRegion(Player player, ProtectedRegion region) {
+        if (player == null || region == null) {
+            return false;
+        }
+
+        // Админы могут всегда
+        if (player.hasPermission("rgprotect.admin")) {
+            return true;
+        }
+
+        UUID playerId = player.getUniqueId();
+        String playerName = player.getName();
+
+        // Владелец может всегда
+        if (region.getOwners().contains(playerId) || region.getOwners().contains(playerName)) {
+            return true;
+        }
+
+        // Члены региона могут (если добавлены)
+        return region.getMembers().contains(playerId) || region.getMembers().contains(playerName);
     }
 
     /**
@@ -2156,7 +2269,7 @@ public class RegionMenuManager {
     }
 
     /**
-     * Поиск мира для региона
+     * Поиск мира для региона (единственная версия)
      */
     private World findWorldForRegion(String regionId) {
         if (regionId == null || regionId.trim().isEmpty()) {
@@ -2180,6 +2293,11 @@ public class RegionMenuManager {
         return null;
     }
     // ===== ПУБЛИЧНЫЕ МЕТОДЫ УПРАВЛЕНИЯ МЕНЮ =====
+
+    /**
+     * Закрытие меню для игрока
+     */
+// ===== ПУБЛИЧНЫЕ МЕТОДЫ УПРАВЛЕНИЯ МЕНЮ =====
 
     /**
      * Закрытие меню для игрока
@@ -2372,42 +2490,50 @@ public class RegionMenuManager {
     public boolean validateIntegrity() {
         boolean hasErrors = false;
 
-        // Проверяем соответствие таймаутов и ожидающих удалений
-        for (UUID playerId : pendingDeletions.keySet()) {
-            if (!pendingDeletionTimeouts.containsKey(playerId)) {
-                plugin.getLogger().warning("INTEGRITY: Найдено ожидающее удаление без таймаута для игрока " + playerId);
-                hasErrors = true;
+        try {
+            // Проверяем соответствие таймаутов и ожидающих удалений
+            for (UUID playerId : pendingDeletions.keySet()) {
+                if (!pendingDeletionTimeouts.containsKey(playerId)) {
+                    plugin.getLogger().warning("INTEGRITY: Найдено ожидающее удаление без таймаута для игрока " + playerId);
+                    hasErrors = true;
+                }
             }
-        }
 
-        // Проверяем наличие отмененных таймаутов
-        for (Map.Entry<UUID, BukkitTask> entry : pendingDeletionTimeouts.entrySet()) {
-            BukkitTask task = entry.getValue();
-            if (task != null && task.isCancelled()) {
-                plugin.getLogger().warning("INTEGRITY: Найден отмененный таймаут для игрока " + entry.getKey());
-                hasErrors = true;
+            // Проверяем наличие отмененных таймаутов
+            for (Map.Entry<UUID, BukkitTask> entry : pendingDeletionTimeouts.entrySet()) {
+                BukkitTask task = entry.getValue();
+                if (task != null && task.isCancelled()) {
+                    plugin.getLogger().warning("INTEGRITY: Найден отмененный таймаут для игрока " + entry.getKey());
+                    hasErrors = true;
+                }
             }
-        }
 
-        // Проверяем существование регионов для открытых меню
-        for (Map.Entry<UUID, String> entry : openMenus.entrySet()) {
-            String regionId = entry.getValue();
-            ProtectedRegion region = findRegionById(regionId);
-            if (region == null) {
-                Player player = plugin.getServer().getPlayer(entry.getKey());
-                String playerName = player != null ? player.getName() : "OFFLINE";
-                plugin.getLogger().warning("INTEGRITY: Игрок " + playerName + " имеет открытое меню для несуществующего региона " + regionId);
-                hasErrors = true;
+            // Проверяем существование регионов для открытых меню
+            for (Map.Entry<UUID, String> entry : openMenus.entrySet()) {
+                String regionId = entry.getValue();
+                if (regionId != null) {
+                    ProtectedRegion region = findRegionById(regionId);
+                    if (region == null) {
+                        Player player = plugin.getServer().getPlayer(entry.getKey());
+                        String playerName = player != null ? player.getName() : "OFFLINE";
+                        plugin.getLogger().warning("INTEGRITY: Игрок " + playerName + " имеет открытое меню для несуществующего региона " + regionId);
+                        hasErrors = true;
+                    }
+                }
             }
-        }
 
-        if (hasErrors) {
-            plugin.getLogger().warning("INTEGRITY: Обнаружены проблемы целостности данных!");
-        } else {
-            plugin.getLogger().info("INTEGRITY: Проверка целостности пройдена успешно");
-        }
+            if (hasErrors) {
+                plugin.getLogger().warning("INTEGRITY: Обнаружены проблемы целостности данных!");
+            } else {
+                plugin.getLogger().info("INTEGRITY: Проверка целостности пройдена успешно");
+            }
 
-        return !hasErrors;
+            return !hasErrors;
+
+        } catch (Exception e) {
+            plugin.getLogger().warning("INTEGRITY: Ошибка при проверке целостности: " + e.getMessage());
+            return false;
+        }
     }
 
     /**
