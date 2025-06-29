@@ -122,6 +122,9 @@ public class HeightExpansionManager {
     /**
      * НОВЫЙ метод для активации расширения с точным временем в секундах
      */
+    /**
+     * НОВЫЙ метод для активации расширения с точным временем в секундах
+     */
     public boolean activateHeightExpansionSeconds(String regionId, int seconds) {
         plugin.getLogger().info("=== АКТИВАЦИЯ РАСШИРЕНИЯ ПО ВЫСОТЕ (СЕКУНДЫ) ===");
         plugin.getLogger().info("Регион: " + regionId + ", секунды: " + seconds);
@@ -196,9 +199,6 @@ public class HeightExpansionManager {
         sentNotifications.put(regionId, new HashSet<>());
 
         saveExpansions();
-        plugin.getLogger().info("Данные расширения сохранены");
-
-        plugin.getLogger().info("Границы оставлены на месте - расширение по высоте НЕ влияет на видимые границы");
 
         plugin.getLogger().info("Активировано временное расширение по высоте для региона " + regionId +
                 " на " + formatSecondsToTime(seconds));
@@ -774,6 +774,9 @@ public class HeightExpansionManager {
 
     /**
      * НОВЫЙ вспомогательный метод для форматирования времени из секунд
+     */
+    /**
+     * НОВЫЙ метод для форматирования времени из секунд
      */
     private String formatSecondsToTime(int seconds) {
         if (seconds < 60) {

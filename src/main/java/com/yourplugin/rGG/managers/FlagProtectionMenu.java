@@ -113,7 +113,7 @@ public class FlagProtectionMenu {
     }
 
     /**
-     * Добавление кнопок флагов
+     * ИСПРАВЛЕННОЕ добавление кнопок флагов с правильной обработкой цветов
      */
     private void addFlagButtons(Inventory menu, Player player, ProtectedRegion region) {
         String regionId = region.getId();
@@ -133,6 +133,12 @@ public class FlagProtectionMenu {
             List<String> lore = plugin.getConfig().getStringList(path + ".lore");
             double pricePerHour = plugin.getConfig().getDouble(path + ".price-per-hour", 1000.0);
 
+            // ИСПРАВЛЕНИЕ: Логируем для отладки
+            if (plugin.getConfig().getBoolean("debug.enabled", false)) {
+                plugin.getLogger().info("DEBUG FLAG: Обрабатываем флаг " + flagKey);
+                plugin.getLogger().info("DEBUG FLAG: Название из конфига: '" + flagName + "'");
+            }
+
             Material material;
             try {
                 material = Material.valueOf(materialName);
@@ -147,14 +153,23 @@ public class FlagProtectionMenu {
             boolean isActive = plugin.getFlagProtectionManager().isFlagActive(regionId, flagKey);
             String remainingTime = plugin.getFlagProtectionManager().getFormattedRemainingTime(regionId, flagKey);
 
-            // Форматируем название
-            String displayName = flagName;
+            // ИСПРАВЛЕНИЕ: Правильная обработка цветовых кодов для названия
+            String processedFlagName = ChatColor.translateAlternateColorCodes('&', flagName);
+            String displayName;
+
             if (isActive) {
-                displayName = ChatColor.GREEN + "✅ " + flagName + " (Активен)";
+                displayName = ChatColor.GREEN + "✅ " + processedFlagName + " " + ChatColor.GREEN + "(Активен)";
             } else {
-                displayName = ChatColor.GRAY + "❌ " + flagName + " (Неактивен)";
+                displayName = ChatColor.GRAY + "❌ " + processedFlagName + " " + ChatColor.GRAY + "(Неактивен)";
             }
+
             meta.setDisplayName(displayName);
+
+            // ИСПРАВЛЕНИЕ: Логируем результат
+            if (plugin.getConfig().getBoolean("debug.enabled", false)) {
+                plugin.getLogger().info("DEBUG FLAG: Обработанное название: '" + processedFlagName + "'");
+                plugin.getLogger().info("DEBUG FLAG: Финальное отображение: '" + displayName + "'");
+            }
 
             // Форматируем описание
             List<String> formattedLore = new ArrayList<>();
@@ -292,6 +307,10 @@ public class FlagProtectionMenu {
     private void handleFlagClick(Player player, ProtectedRegion region, String flagKey) {
         String regionId = region.getId();
         String flagName = plugin.getConfig().getString("flag-protection.flags." + flagKey + ".name", flagKey);
+        // ИСПРАВЛЕНИЕ: Обрабатываем цветовые коды в названии флага для отображения
+        String displayFlagName = ChatColor.translateAlternateColorCodes('&', flagName);
+        // Убираем цветовые коды для текстового отображения
+        String cleanFlagName = ChatColor.stripColor(displayFlagName);
 
         // Проверяем права доступа
         if (!canPlayerManageFlags(player, region)) {
@@ -304,7 +323,7 @@ public class FlagProtectionMenu {
         // Отправляем инструкции по вводу времени
         player.sendMessage("");
         player.sendMessage(ChatColor.GOLD + "=== АРЕНДА ФЛАГА ===");
-        player.sendMessage(ChatColor.YELLOW + "Флаг: " + ChatColor.WHITE + flagName);
+        player.sendMessage(ChatColor.YELLOW + "Флаг: " + displayFlagName);
         player.sendMessage("");
         player.sendMessage(ChatColor.GREEN + "Введите время аренды в чат:");
         player.sendMessage(ChatColor.GRAY + "Формат: 1ч3м2с (1 час 3 минуты 2 секунды)");
@@ -369,7 +388,9 @@ public class FlagProtectionMenu {
         // Рассчитываем стоимость
         double cost = plugin.getFlagProtectionManager().calculateFlagCost(purchaseData.flagName, durationSeconds);
         String timeFormatted = plugin.getFlagProtectionManager().formatTime(durationSeconds);
-        String flagDisplayName = plugin.getConfig().getString("flag-protection.flags." + purchaseData.flagName + ".name", purchaseData.flagName);
+        String flagDisplayName = ChatColor.translateAlternateColorCodes('&',
+                plugin.getConfig().getString("flag-protection.flags." + purchaseData.flagName + ".name", purchaseData.flagName));
+        String cleanFlagName = ChatColor.stripColor(flagDisplayName);
 
         // Обновляем данные покупки
         purchaseData.durationSeconds = durationSeconds;
@@ -379,7 +400,7 @@ public class FlagProtectionMenu {
         // Отправляем подтверждение
         player.sendMessage("");
         player.sendMessage(ChatColor.GOLD + "=== ПОДТВЕРЖДЕНИЕ ПОКУПКИ ===");
-        player.sendMessage(ChatColor.YELLOW + "Флаг: " + ChatColor.WHITE + flagDisplayName);
+        player.sendMessage(ChatColor.YELLOW + "Флаг: " + flagDisplayName);
         player.sendMessage(ChatColor.YELLOW + "Время аренды: " + ChatColor.WHITE + timeFormatted);
         player.sendMessage(ChatColor.YELLOW + "Стоимость: " + ChatColor.WHITE + formatPrice(cost) + " монет");
         player.sendMessage("");
@@ -452,12 +473,13 @@ public class FlagProtectionMenu {
             );
 
             if (success) {
-                String flagDisplayName = plugin.getConfig().getString("flag-protection.flags." + purchaseData.flagName + ".name", purchaseData.flagName);
+                String flagDisplayName = ChatColor.translateAlternateColorCodes('&',
+                        plugin.getConfig().getString("flag-protection.flags." + purchaseData.flagName + ".name", purchaseData.flagName));
                 String timeFormatted = plugin.getFlagProtectionManager().formatTime(purchaseData.durationSeconds);
 
                 player.sendMessage("");
                 player.sendMessage(ChatColor.GREEN + "✅ Флаг успешно активирован!");
-                player.sendMessage(ChatColor.YELLOW + "Флаг: " + ChatColor.WHITE + flagDisplayName);
+                player.sendMessage(ChatColor.YELLOW + "Флаг: " + flagDisplayName);
                 player.sendMessage(ChatColor.YELLOW + "Время: " + ChatColor.WHITE + timeFormatted);
                 player.sendMessage(ChatColor.YELLOW + "Списано: " + ChatColor.WHITE + formatPrice(purchaseData.cost) + " монет");
                 player.sendMessage("");

@@ -65,6 +65,7 @@ hologram:
     - "&7Создан: &f{date}"
     - "&7Время жизни: &f{timer}"
     - "&dРасширение ↕: &f{height_expansion}"
+    - "&dФлаги: &f{flag_protection}"
 
 # Настройки визуализации
 visualization:
