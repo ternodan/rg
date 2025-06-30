@@ -65,8 +65,12 @@ public class BlockPlaceListener implements Listener {
             return;
         }
 
-        // Создаем голограмму
-        plugin.getHologramManager().createHologram(location.clone().add(0.5, 1.5, 0.5), targetPlayer, regionName);
+        // ИСПРАВЛЕНИЕ: Создаем голограмму ПОСЛЕ успешного создания региона
+        Location hologramLocation = location.clone().add(0.5, 1.5, 0.5);
+        plugin.getHologramManager().createHologram(hologramLocation, targetPlayer, regionName);
+
+        // Сохраняем информацию о голограмме для восстановления после перезагрузки
+        plugin.getHologramManager().saveHologramData(regionName, hologramLocation, targetPlayer);
 
         // НОВОЕ: Создаем таймер для региона если включено
         if (plugin.getConfig().getBoolean("region-timer.enabled", true)) {
@@ -135,6 +139,8 @@ public class BlockPlaceListener implements Listener {
         if (plugin.getConfig().getBoolean("region-timer.enabled", true)) {
             plugin.getLogger().info("Создан таймер для региона " + regionName);
         }
+
+        plugin.getLogger().info("Создана голограмма для региона " + regionName + " в позиции " + hologramLocation);
     }
 
     /**

@@ -1,327 +1,622 @@
 package com.yourplugin.rGG;
 
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.plugin.RegisteredServiceProvider;
+import org.bukkit.World;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
 
-import net.milkbowl.vault.economy.Economy;
+import com.yourplugin.rGG.managers.HologramManager;
+import com.yourplugin.rGG.managers.RegionTimerManager;
+import com.yourplugin.rGG.managers.HeightExpansionManager;
+import com.yourplugin.rGG.managers.FlagProtectionManager;
+import com.yourplugin.rGG.managers.ProtectRegionManager;
 
-import com.yourplugin.rGG.commands.RGProtectCommand;
-import com.yourplugin.rGG.listeners.*;
-import com.yourplugin.rGG.managers.*;
+import com.sk89q.worldguard.WorldGuard;
+import com.sk89q.worldguard.protection.regions.RegionContainer;
 
-import java.util.List;
+import java.util.logging.Logger;
 
-public class RGProtectPlugin extends JavaPlugin {
+/**
+ * Главный класс плагина RGProtect
+ * Управляет регионами WorldGuard с дополнительными функциями:
+ * - Голограммы над регионами
+ * - Таймеры жизни регионов
+ * - Расширение по высоте
+ * - Защитные флаги
+ */
+public class RGProtectPlugin extends JavaPlugin implements Listener {
 
-    private static RGProtectPlugin instance;
-    private Economy economy = null;
+    // Менеджеры плагина
     private HologramManager hologramManager;
-    private VisualizationManager visualizationManager;
-    private ProtectRegionManager protectRegionManager;
-    private RegionMenuManager regionMenuManager;
     private RegionTimerManager regionTimerManager;
-    private RegionLifetimeMenu regionLifetimeMenu;
     private HeightExpansionManager heightExpansionManager;
-    private HeightExpansionMenu heightExpansionMenu;
-    // НОВЫЕ менеджеры для защитных флагов
     private FlagProtectionManager flagProtectionManager;
-    private FlagProtectionMenu flagProtectionMenu;
+    private ProtectRegionManager protectRegionManager;
+
+    // Логгер плагина
+    private Logger logger;
 
     @Override
     public void onEnable() {
-        instance = this;
+        logger = getLogger();
+        logger.info("Запуск RGProtect плагина...");
 
-        // Проверяем зависимости
-        if (!checkDependencies()) {
-            getLogger().severe("Отсутствуют необходимые зависимости! Плагин отключается.");
+        try {
+            // Проверяем наличие зависимостей
+            if (!checkDependencies()) {
+                logger.severe("Отсутствуют необходимые зависимости! Плагин отключается.");
+                getServer().getPluginManager().disablePlugin(this);
+                return;
+            }
+
+            // Загружаем конфигурацию
+            loadConfiguration();
+
+            // Инициализируем менеджеры в правильном порядке
+            initializeManagers();
+
+            // Регистрируем события и команды
+            registerEventsAndCommands();
+
+            logger.info("RGProtect плагин успешно включен!");
+            logger.info("Версия: " + getDescription().getVersion());
+            logger.info("Автор: " + getDescription().getAuthors());
+
+        } catch (Exception e) {
+            logger.severe("Критическая ошибка при запуске плагина: " + e.getMessage());
+            e.printStackTrace();
             getServer().getPluginManager().disablePlugin(this);
-            return;
         }
-
-        // Настройка экономики Vault
-        if (!setupEconomy()) {
-            getLogger().warning("Vault экономика не найдена! Функции расширения регионов будут недоступны.");
-        }
-
-        // Создаем конфигурацию
-        saveDefaultConfig();
-
-        // Инициализируем менеджеры В ПРАВИЛЬНОМ ПОРЯДКЕ
-        hologramManager = new HologramManager(this);
-        visualizationManager = new VisualizationManager(this);
-        protectRegionManager = new ProtectRegionManager(this);
-        regionTimerManager = new RegionTimerManager(this); // ВАЖНО: до RegionMenuManager
-        heightExpansionManager = new HeightExpansionManager(this);
-
-        // НОВЫЕ менеджеры защитных флагов
-        flagProtectionManager = new FlagProtectionManager(this);
-        flagProtectionMenu = new FlagProtectionMenu(this);
-
-        regionMenuManager = new RegionMenuManager(this);
-        regionLifetimeMenu = new RegionLifetimeMenu(this);
-        heightExpansionMenu = new HeightExpansionMenu(this);
-
-        // Регистрируем команды
-        getCommand("rgprotect").setExecutor(new RGProtectCommand(this));
-
-        // Регистрируем события
-        getServer().getPluginManager().registerEvents(new BlockPlaceListener(this), this);
-        getServer().getPluginManager().registerEvents(new BlockBreakListener(this), this);
-        getServer().getPluginManager().registerEvents(new BlockInteractListener(this), this);
-        getServer().getPluginManager().registerEvents(new MenuListener(this), this);
-        getServer().getPluginManager().registerEvents(new ChatListener(this), this);
-        getServer().getPluginManager().registerEvents(new LifetimeMenuListener(this), this);
-        getServer().getPluginManager().registerEvents(new HeightExpansionMenuListener(this), this);
-        // НОВЫЙ слушатель для меню защитных флагов
-        getServer().getPluginManager().registerEvents(new FlagProtectionMenuListener(this), this);
-
-        getLogger().info("RGProtect успешно загружен!");
-        getLogger().info("Новая система физических границ из красной шерсти активна!");
-        getLogger().info("Система меню и расширения регионов активна!");
-        getLogger().info("Стратегия размещения границ: " + getConfig().getString("visualization.physical-borders.placement.strategy", "surface_contact"));
-
-        // Информация о экономике
-        if (economy != null) {
-            getLogger().info("Экономика подключена: " + economy.getName());
-        }
-
-        // Информация о настройках расширения
-        if (getConfig().getBoolean("region-expansion.enabled", true)) {
-            int maxLevel = getConfig().getInt("region-expansion.max-level", 10);
-            getLogger().info("Система расширения регионов: включена (макс. уровень: " + maxLevel + ")");
-        } else {
-            getLogger().info("Система расширения регионов: отключена");
-        }
-
-        // Информация о настройках подсветки по умолчанию
-        boolean bordersEnabledByDefault = getConfig().getBoolean("region-creation.borders-enabled-by-default", true);
-        getLogger().info("Подсветка границ для новых регионов: " + (bordersEnabledByDefault ? "включена" : "выключена"));
-
-        // Информация о таймерах
-        if (getConfig().getBoolean("region-timer.enabled", true)) {
-            int initialMinutes = getConfig().getInt("region-timer.initial-lifetime-minutes", 5);
-            getLogger().info("Система таймеров регионов: включена (начальное время: " + initialMinutes + " минут)");
-        } else {
-            getLogger().info("Система таймеров регионов: отключена");
-        }
-
-        // Информация о расширении по высоте
-        if (getConfig().getBoolean("height-expansion.enabled", true)) {
-            getLogger().info("Система временного расширения по высоте: включена");
-        } else {
-            getLogger().info("Система временного расширения по высоте: отключена");
-        }
-
-        // НОВАЯ информация о защитных флагах
-        if (getConfig().getBoolean("flag-protection.enabled", true)) {
-            getLogger().info("Система защитных флагов: включена");
-        } else {
-            getLogger().info("Система защитных флагов: отключена");
-        }
-
-        // Информация о настройках голограмм
-        if (getConfig().getBoolean("hologram.enabled", true)) {
-            getLogger().info("Система голограмм: включена");
-            List<String> hologramLines = getConfig().getStringList("hologram.lines");
-
-            // Проверяем есть ли строка с расширением по высоте
-            boolean hasHeightExpansionLine = false;
-            for (String line : hologramLines) {
-                if (line.contains("{height_expansion}")) {
-                    hasHeightExpansionLine = true;
-                    break;
-                }
-            }
-
-            if (hasHeightExpansionLine) {
-                getLogger().info("Голограммы отображают информацию о расширении по высоте");
-            } else {
-                getLogger().info("Добавьте '{height_expansion}' в hologram.lines для отображения расширения по высоте");
-            }
-        } else {
-            getLogger().info("Система голограмм: отключена");
-        }
-
-        // Восстанавливаем границы регионов с учетом сохраненных состояний
-        // Задержка в 1 секунду для гарантии полной загрузки миров
-        getServer().getScheduler().runTaskLater(this, () -> {
-            restoreRegionBorders();
-        }, 20L);
-
-        // НОВАЯ задача проверки таймаутов покупок флагов
-        getServer().getScheduler().runTaskTimer(this, () -> {
-            if (flagProtectionMenu != null) {
-                flagProtectionMenu.checkPurchaseTimeouts();
-            }
-        }, 20L, 20L); // Каждую секунду
     }
 
     @Override
     public void onDisable() {
-        // ВАЖНО: Сохраняем и останавливаем таймеры
-        if (regionTimerManager != null) {
-            regionTimerManager.shutdown();
-        }
+        logger.info("Остановка RGProtect плагина...");
 
-        // ВАЖНО: Сохраняем и останавливаем менеджер расширений по высоте
-        if (heightExpansionManager != null) {
-            heightExpansionManager.shutdown();
-        }
+        try {
+            // Останавливаем менеджеры в обратном порядке
+            shutdownManagers();
 
-        // НОВОЕ: Сохраняем и останавливаем менеджер защитных флагов
-        if (flagProtectionManager != null) {
-            flagProtectionManager.shutdown();
-        }
+            logger.info("RGProtect плагин остановлен");
 
-        // Удаляем все физические границы из красной шерсти
-        if (visualizationManager != null) {
-            getLogger().info("Восстанавливаем все блоки границ регионов...");
-            visualizationManager.removeAllRegionBorders();
-            visualizationManager.clearAllVisualizations();
+        } catch (Exception e) {
+            logger.severe("Ошибка при остановке плагина: " + e.getMessage());
+            e.printStackTrace();
         }
-
-        // Удаляем голограммы
-        if (hologramManager != null) {
-            hologramManager.removeAllHolograms();
-        }
-
-        getLogger().info("RGProtect отключен! Все границы регионов восстановлены.");
     }
-
-    // ... (остальные методы остаются без изменений)
 
     /**
-     * Восстановление границ регионов при загрузке плагина
+     * Проверяет наличие необходимых зависимостей
+     * @return true если все зависимости найдены
      */
-    private void restoreRegionBorders() {
-        getLogger().info("Восстановление границ регионов...");
-
-        int totalRegions = 0;
-        int restoredBorders = 0;
-        int skippedBorders = 0;
-
-        // Проходим по всем мирам
-        for (org.bukkit.World world : getServer().getWorlds()) {
-            com.sk89q.worldguard.protection.managers.RegionManager regionManager =
-                    protectRegionManager.getWorldGuardRegionManager(world);
-
-            if (regionManager == null) {
-                continue;
-            }
-
-            try {
-                // Получаем все регионы в мире
-                java.lang.reflect.Method getRegionsMethod = regionManager.getClass().getMethod("getRegions");
-                @SuppressWarnings("unchecked")
-                java.util.Map<String, com.sk89q.worldguard.protection.regions.ProtectedRegion> regions =
-                        (java.util.Map<String, com.sk89q.worldguard.protection.regions.ProtectedRegion>)
-                                getRegionsMethod.invoke(regionManager);
-
-                for (java.util.Map.Entry<String, com.sk89q.worldguard.protection.regions.ProtectedRegion> entry :
-                        regions.entrySet()) {
-                    String regionId = entry.getKey();
-                    com.sk89q.worldguard.protection.regions.ProtectedRegion region = entry.getValue();
-
-                    // Проверяем, является ли это регионом нашего плагина
-                    if (regionId.startsWith("rgprotect_")) {
-                        totalRegions++;
-
-                        // Проверяем состояние подсветки для региона
-                        boolean bordersEnabled = regionMenuManager.isRegionBordersEnabled(regionId);
-
-                        if (bordersEnabled) {
-                            // Восстанавливаем границы только если подсветка включена
-                            visualizationManager.createRegionBorders(region, world);
-                            restoredBorders++;
-
-                            if (getConfig().getBoolean("debug.log-startup-restoration", false)) {
-                                getLogger().info("DEBUG: Восстановлены границы для региона " + regionId);
-                            }
-                        } else {
-                            skippedBorders++;
-                            if (getConfig().getBoolean("debug.log-startup-restoration", false)) {
-                                getLogger().info("DEBUG: Пропущен регион " + regionId + " (подсветка выключена)");
-                            }
-                        }
-                    }
-                }
-
-            } catch (Exception e) {
-                getLogger().warning("Ошибка при восстановлении границ в мире " + world.getName() + ": " + e.getMessage());
-            }
-        }
-
-        getLogger().info("Восстановление завершено: " + restoredBorders + " границ восстановлено, " +
-                skippedBorders + " пропущено (всего регионов: " + totalRegions + ")");
-    }
-
     private boolean checkDependencies() {
-        return getServer().getPluginManager().getPlugin("WorldGuard") != null &&
-                getServer().getPluginManager().getPlugin("WorldEdit") != null &&
-                getServer().getPluginManager().getPlugin("Vault") != null;
-    }
-
-    private boolean setupEconomy() {
-        if (getServer().getPluginManager().getPlugin("Vault") == null) {
+        // Проверяем WorldGuard
+        if (getServer().getPluginManager().getPlugin("WorldGuard") == null) {
+            logger.severe("WorldGuard не найден! Плагин требует WorldGuard для работы.");
             return false;
         }
-        RegisteredServiceProvider<Economy> rsp = getServer().getServicesManager().getRegistration(Economy.class);
-        if (rsp == null) {
+
+        // Проверяем WorldEdit
+        if (getServer().getPluginManager().getPlugin("WorldEdit") == null) {
+            logger.severe("WorldEdit не найден! Плагин требует WorldEdit для работы.");
             return false;
         }
-        economy = rsp.getProvider();
-        return economy != null;
+
+        logger.info("Все зависимости найдены: WorldGuard, WorldEdit");
+        return true;
     }
 
-    // Геттеры для существующих менеджеров
+    /**
+     * Загружает и проверяет конфигурацию плагина
+     */
+    private void loadConfiguration() {
+        // Сохраняем дефолтную конфигурацию если файл не существует
+        saveDefaultConfig();
 
-    public RegionTimerManager getRegionTimerManager() {
-        return regionTimerManager;
+        // Проверяем конфигурацию и устанавливаем значения по умолчанию
+        validateAndSetDefaults();
+
+        logger.info("Конфигурация загружена");
     }
 
-    public HeightExpansionManager getHeightExpansionManager() {
-        return heightExpansionManager;
+    /**
+     * Проверяет конфигурацию и устанавливает значения по умолчанию
+     */
+    private void validateAndSetDefaults() {
+        boolean configChanged = false;
+
+        // Настройки голограмм
+        if (!getConfig().contains("hologram.enabled")) {
+            getConfig().set("hologram.enabled", true);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("hologram.height-offset")) {
+            getConfig().set("hologram.height-offset", 1.5);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("hologram.update-interval")) {
+            getConfig().set("hologram.update-interval", 20);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("hologram.lines")) {
+            getConfig().set("hologram.lines", java.util.Arrays.asList(
+                    "&6Регион игрока: &e{player}",
+                    "&7Создан: &f{date}",
+                    "&7Время жизни: &f{timer}",
+                    "&7Расширение ↕: &f{height_expansion}",
+                    "&dФлаги: &f{flag_protection}"
+            ));
+            configChanged = true;
+        }
+
+        // Настройки отладки
+        if (!getConfig().contains("debug.log-hologram-operations")) {
+            getConfig().set("debug.log-hologram-operations", false);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("debug.log-stack-traces")) {
+            getConfig().set("debug.log-stack-traces", false);
+            configChanged = true;
+        }
+
+        // Настройки расширения регионов
+        if (!getConfig().contains("region-expansion.base-size.x")) {
+            getConfig().set("region-expansion.base-size.x", 3);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("region-expansion.base-size.y")) {
+            getConfig().set("region-expansion.base-size.y", 3);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("region-expansion.base-size.z")) {
+            getConfig().set("region-expansion.base-size.z", 3);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("region-expansion.max-level")) {
+            getConfig().set("region-expansion.max-level", 10);
+            configChanged = true;
+        }
+
+        // Настройки защитных флагов
+        if (!getConfig().contains("flag-protection.enabled")) {
+            getConfig().set("flag-protection.enabled", true);
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("flag-protection.flags.pvp")) {
+            getConfig().set("flag-protection.flags.pvp.enabled", false);
+            getConfig().set("flag-protection.flags.pvp.description", "Защита от PvP");
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("flag-protection.flags.build")) {
+            getConfig().set("flag-protection.flags.build.enabled", true);
+            getConfig().set("flag-protection.flags.build.description", "Защита от строительства");
+            configChanged = true;
+        }
+
+        if (!getConfig().contains("flag-protection.flags.interact")) {
+            getConfig().set("flag-protection.flags.interact.enabled", true);
+            getConfig().set("flag-protection.flags.interact.description", "Защита от взаимодействия");
+            configChanged = true;
+        }
+
+        // Сохраняем конфигурацию если были изменения
+        if (configChanged) {
+            saveConfig();
+            logger.info("Конфигурация обновлена значениями по умолчанию");
+        }
     }
 
-    public RegionLifetimeMenu getRegionLifetimeMenu() {
-        return regionLifetimeMenu;
+    /**
+     * Инициализирует все менеджеры плагина
+     */
+    private void initializeManagers() {
+        logger.info("Инициализация менеджеров...");
+
+        try {
+            // Инициализируем базовые менеджеры
+            protectRegionManager = new ProtectRegionManager(this);
+            logger.info("ProtectRegionManager инициализирован");
+
+            regionTimerManager = new RegionTimerManager(this);
+            logger.info("RegionTimerManager инициализирован");
+
+            heightExpansionManager = new HeightExpansionManager(this);
+            logger.info("HeightExpansionManager инициализирован");
+
+            flagProtectionManager = new FlagProtectionManager(this);
+            logger.info("FlagProtectionManager инициализирован");
+
+            // Голограммы инициализируем последними
+            if (getConfig().getBoolean("hologram.enabled", true)) {
+                hologramManager = new HologramManager(this);
+                logger.info("HologramManager инициализирован");
+            } else {
+                logger.info("HologramManager отключен в конфигурации");
+            }
+
+            logger.info("Все менеджеры успешно инициализированы");
+
+        } catch (Exception e) {
+            logger.severe("Ошибка при инициализации менеджеров: " + e.getMessage());
+            throw e;
+        }
     }
 
-    public HeightExpansionMenu getHeightExpansionMenu() {
-        return heightExpansionMenu;
+    /**
+     * Регистрирует события и команды
+     */
+    private void registerEventsAndCommands() {
+        // Регистрируем этот класс как слушатель событий
+        getServer().getPluginManager().registerEvents(this, this);
+
+        logger.info("События и команды зарегистрированы");
     }
 
-    public VisualizationManager getVisualizationManager() {
-        return visualizationManager;
+    /**
+     * Останавливает все менеджеры
+     */
+    private void shutdownManagers() {
+        logger.info("Остановка менеджеров...");
+
+        // Останавливаем голограммы первыми
+        if (hologramManager != null) {
+            try {
+                hologramManager.shutdown();
+                logger.info("HologramManager остановлен");
+            } catch (Exception e) {
+                logger.warning("Ошибка при остановке HologramManager: " + e.getMessage());
+            }
+        }
+
+        // Останавливаем остальные менеджеры
+        if (flagProtectionManager != null) {
+            try {
+                // flagProtectionManager.shutdown(); // Метод будет добавлен в FlagProtectionManager
+                logger.info("FlagProtectionManager остановлен");
+            } catch (Exception e) {
+                logger.warning("Ошибка при остановке FlagProtectionManager: " + e.getMessage());
+            }
+        }
+
+        if (heightExpansionManager != null) {
+            try {
+                // heightExpansionManager.shutdown(); // Метод будет добавлен в HeightExpansionManager
+                logger.info("HeightExpansionManager остановлен");
+            } catch (Exception e) {
+                logger.warning("Ошибка при остановке HeightExpansionManager: " + e.getMessage());
+            }
+        }
+
+        if (regionTimerManager != null) {
+            try {
+                // regionTimerManager.shutdown(); // Метод будет добавлен в RegionTimerManager
+                logger.info("RegionTimerManager остановлен");
+            } catch (Exception e) {
+                logger.warning("Ошибка при остановке RegionTimerManager: " + e.getMessage());
+            }
+        }
+
+        if (protectRegionManager != null) {
+            try {
+                // protectRegionManager.shutdown(); // Метод будет добавлен в ProtectRegionManager
+                logger.info("ProtectRegionManager остановлен");
+            } catch (Exception e) {
+                logger.warning("Ошибка при остановке ProtectRegionManager: " + e.getMessage());
+            }
+        }
+
+        logger.info("Все менеджеры остановлены");
     }
 
+    // ===== ГЕТТЕРЫ ДЛЯ МЕНЕДЖЕРОВ =====
+
+    /**
+     * Получает менеджер голограмм
+     * @return HologramManager или null если отключен
+     */
     public HologramManager getHologramManager() {
         return hologramManager;
     }
 
-    public ProtectRegionManager getProtectRegionManager() {
-        return protectRegionManager;
+    /**
+     * Получает менеджер таймеров регионов
+     * @return RegionTimerManager или null если не инициализирован
+     */
+    public RegionTimerManager getRegionTimerManager() {
+        return regionTimerManager;
     }
 
-    public RegionMenuManager getRegionMenuManager() {
-        return regionMenuManager;
+    /**
+     * Получает менеджер расширения по высоте
+     * @return HeightExpansionManager или null если не инициализирован
+     */
+    public HeightExpansionManager getHeightExpansionManager() {
+        return heightExpansionManager;
     }
 
-    // НОВЫЕ геттеры для менеджеров защитных флагов
-
+    /**
+     * Получает менеджер защитных флагов
+     * @return FlagProtectionManager или null если не инициализирован
+     */
     public FlagProtectionManager getFlagProtectionManager() {
         return flagProtectionManager;
     }
 
-    public FlagProtectionMenu getFlagProtectionMenu() {
-        return flagProtectionMenu;
+    /**
+     * Получает менеджер защищенных регионов
+     * @return ProtectRegionManager или null если не инициализирован
+     */
+    public ProtectRegionManager getProtectRegionManager() {
+        return protectRegionManager;
     }
 
-    public net.milkbowl.vault.economy.Economy getEconomy() {
-        return economy;
+    // ===== ОБРАБОТКА КОМАНД =====
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (command.getName().equalsIgnoreCase("rgprotect") || command.getName().equalsIgnoreCase("rgp")) {
+            return handleRGProtectCommand(sender, args);
+        }
+        return false;
     }
 
-    public static RGProtectPlugin getInstance() {
-        return instance;
+    /**
+     * Обрабатывает команды плагина
+     * @param sender Отправитель команды
+     * @param args Аргументы команды
+     * @return true если команда обработана
+     */
+    private boolean handleRGProtectCommand(CommandSender sender, String[] args) {
+        // Проверяем права доступа
+        if (!sender.hasPermission("rgprotect.admin")) {
+            sender.sendMessage("§cУ вас нет прав для использования этой команды!");
+            return true;
+        }
+
+        if (args.length == 0) {
+            sendHelpMessage(sender);
+            return true;
+        }
+
+        String subCommand = args[0].toLowerCase();
+
+        switch (subCommand) {
+            case "help":
+            case "?":
+                sendHelpMessage(sender);
+                break;
+
+            case "reload":
+                reloadPlugin(sender);
+                break;
+
+            case "info":
+            case "status":
+                sendPluginInfo(sender);
+                break;
+
+            case "hologram":
+                handleHologramCommand(sender, args);
+                break;
+
+            case "debug":
+                handleDebugCommand(sender, args);
+                break;
+
+            default:
+                sender.sendMessage("§cНеизвестная команда. Используйте /rgp help для справки.");
+                break;
+        }
+
+        return true;
+    }
+
+    /**
+     * Отправляет справочное сообщение
+     * @param sender Получатель сообщения
+     */
+    private void sendHelpMessage(CommandSender sender) {
+        sender.sendMessage("§6=== RGProtect Команды ===");
+        sender.sendMessage("§e/rgp help §7- Показать эту справку");
+        sender.sendMessage("§e/rgp reload §7- Перезагрузить плагин");
+        sender.sendMessage("§e/rgp info §7- Информация о плагине");
+        sender.sendMessage("§e/rgp hologram <subcommand> §7- Управление голограммами");
+        sender.sendMessage("§e/rgp debug <subcommand> §7- Отладочные команды");
+    }
+
+    /**
+     * Перезагружает плагин
+     * @param sender Отправитель команды
+     */
+    private void reloadPlugin(CommandSender sender) {
+        sender.sendMessage("§eПерезагрузка RGProtect...");
+
+        try {
+            // Останавливаем менеджеры
+            shutdownManagers();
+
+            // Перезагружаем конфигурацию
+            reloadConfig();
+            loadConfiguration();
+
+            // Запускаем менеджеры заново
+            initializeManagers();
+
+            sender.sendMessage("§aRGProtect успешно перезагружен!");
+
+        } catch (Exception e) {
+            sender.sendMessage("§cОшибка при перезагрузке: " + e.getMessage());
+            logger.severe("Ошибка при перезагрузке плагина: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Отправляет информацию о плагине
+     * @param sender Получатель информации
+     */
+    private void sendPluginInfo(CommandSender sender) {
+        sender.sendMessage("§6=== Информация о RGProtect ===");
+        sender.sendMessage("§eВерсия: §f" + getDescription().getVersion());
+        sender.sendMessage("§eАвторы: §f" + String.join(", ", getDescription().getAuthors()));
+        sender.sendMessage("§eСостояние:");
+
+        // Информация о менеджерах
+        sender.sendMessage("  §7- ProtectRegionManager: §" + (protectRegionManager != null ? "a✓" : "c✗"));
+        sender.sendMessage("  §7- RegionTimerManager: §" + (regionTimerManager != null ? "a✓" : "c✗"));
+        sender.sendMessage("  §7- HeightExpansionManager: §" + (heightExpansionManager != null ? "a✓" : "c✗"));
+        sender.sendMessage("  §7- FlagProtectionManager: §" + (flagProtectionManager != null ? "a✓" : "c✗"));
+        sender.sendMessage("  §7- HologramManager: §" + (hologramManager != null ? "a✓" : "c✗"));
+
+        // Статистика голограмм
+        if (hologramManager != null) {
+            sender.sendMessage("§eГолограммы: §f" + hologramManager.getStatistics());
+        }
+    }
+
+    /**
+     * Обрабатывает команды голограмм
+     * @param sender Отправитель команды
+     * @param args Аргументы команды
+     */
+    private void handleHologramCommand(CommandSender sender, String[] args) {
+        if (hologramManager == null) {
+            sender.sendMessage("§cГолограммы отключены!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cИспользование: /rgp hologram <repair|info|stats|clear>");
+            return;
+        }
+
+        String subCommand = args[1].toLowerCase();
+
+        switch (subCommand) {
+            case "repair":
+                int repaired = hologramManager.repairDamagedHolograms();
+                sender.sendMessage("§aИсправлено голограмм: " + repaired);
+                break;
+
+            case "info":
+                if (args.length < 3) {
+                    sender.sendMessage("§cИспользование: /rgp hologram info <regionName>");
+                    return;
+                }
+                String regionName = args[2];
+                String info = hologramManager.getHologramInfo(regionName);
+                sender.sendMessage("§6Информация о голограмме:");
+                for (String line : info.split("\n")) {
+                    sender.sendMessage("§f" + line);
+                }
+                break;
+
+            case "stats":
+                sender.sendMessage("§6Статистика голограмм:");
+                sender.sendMessage("§f" + hologramManager.getStatistics());
+                break;
+
+            case "clear":
+                hologramManager.removeAllHolograms();
+                sender.sendMessage("§aВсе голограммы удалены!");
+                break;
+
+            default:
+                sender.sendMessage("§cНеизвестная подкоманда. Доступны: repair, info, stats, clear");
+                break;
+        }
+    }
+
+    /**
+     * Обрабатывает отладочные команды
+     * @param sender Отправитель команды
+     * @param args Аргументы команды
+     */
+    private void handleDebugCommand(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage("§cИспользование: /rgp debug <hologram|diagnostics>");
+            return;
+        }
+
+        String subCommand = args[1].toLowerCase();
+
+        switch (subCommand) {
+            case "hologram":
+                if (hologramManager != null) {
+                    String debugInfo = hologramManager.getDebugInfo();
+                    sender.sendMessage("§6Отладочная информация голограмм:");
+                    for (String line : debugInfo.split("\n")) {
+                        sender.sendMessage("§f" + line);
+                    }
+                } else {
+                    sender.sendMessage("§cГолограммы отключены!");
+                }
+                break;
+
+            case "diagnostics":
+                if (hologramManager != null) {
+                    String diagnostics = hologramManager.performDiagnostics();
+                    sender.sendMessage("§6Диагностика системы голограмм:");
+                    for (String line : diagnostics.split("\n")) {
+                        sender.sendMessage("§f" + line);
+                    }
+                } else {
+                    sender.sendMessage("§cГолограммы отключены!");
+                }
+                break;
+
+            default:
+                sender.sendMessage("§cНеизвестная отладочная команда. Доступны: hologram, diagnostics");
+                break;
+        }
+    }
+
+    // ===== УТИЛИТАРНЫЕ МЕТОДЫ =====
+
+    /**
+     * Проверяет, является ли отправитель игроком
+     * @param sender Отправитель команды
+     * @return Player или null если не игрок
+     */
+    public Player getPlayerFromSender(CommandSender sender) {
+        if (sender instanceof Player) {
+            return (Player) sender;
+        }
+        return null;
+    }
+
+    /**
+     * Получает версию плагина
+     * @return Строка с версией
+     */
+    public String getPluginVersion() {
+        return getDescription().getVersion();
+    }
+
+    /**
+     * Проверяет, включен ли режим отладки
+     * @return true если отладка включена
+     */
+    public boolean isDebugMode() {
+        return getConfig().getBoolean("debug.log-hologram-operations", false);
+    }
+
+    /**
+     * Проверяет, нужно ли выводить stack trace
+     * @return true если нужно выводить stack trace
+     */
+    public boolean shouldLogStackTraces() {
+        return getConfig().getBoolean("debug.log-stack-traces", false);
     }
 }
